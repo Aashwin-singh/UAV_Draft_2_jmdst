@@ -1,0 +1,11 @@
+numpy
+pandas
+Pillow
+scipy
+PyYAML
+tqdm
+opencv-python
+motmetrics
+torch
+torchvision
+ultralytics
