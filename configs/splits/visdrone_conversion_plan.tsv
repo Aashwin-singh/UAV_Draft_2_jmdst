@@ -1,0 +1,8 @@
+test	test-dev	configs/splits/visdrone_test_from-test-dev.txt
+test	train	configs/splits/visdrone_test_from-train.txt
+train	test-dev	configs/splits/visdrone_train_from-test-dev.txt
+train	train	configs/splits/visdrone_train_from-train.txt
+train	val	configs/splits/visdrone_train_from-val.txt
+val	test-dev	configs/splits/visdrone_val_from-test-dev.txt
+val	train	configs/splits/visdrone_val_from-train.txt
+val	val	configs/splits/visdrone_val_from-val.txt

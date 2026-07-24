@@ -41,6 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     visdrone = subparsers.add_parser("visdrone", help="Convert VisDrone2019-MOT.")
     _add_common_args(visdrone)
+    visdrone.add_argument(
+        "--source-split",
+        default=None,
+        help=(
+            "Official VisDrone folder to read from (train/val/test-dev). "
+            "Defaults to --split. Set this when re-splitting official data "
+            "into a different train/val/test assignment than the official one."
+        ),
+    )
 
     uavdt = subparsers.add_parser("uavdt", help="Convert UAVDT.")
     _add_common_args(uavdt)
@@ -80,6 +89,7 @@ def main() -> None:
             sequence_list=args.sequence_list,
             collapse_to_vehicle=args.collapse_to_vehicle,
             copy_images=args.copy_images,
+            source_split=args.source_split,
         )
     elif args.dataset == "uavdt":
         sequence_dirs = convert_uavdt(

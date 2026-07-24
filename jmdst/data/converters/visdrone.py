@@ -105,12 +105,22 @@ def convert_visdrone(
     sequence_list: str | Path | None = None,
     collapse_to_vehicle: bool = False,
     copy_images: bool = False,
+    source_split: str | None = None,
 ) -> list[Path]:
-    """Convert a VisDrone split into the unified JMDST format."""
+    """Convert a VisDrone split into the unified JMDST format.
+
+    ``split`` labels the *output* location (``output_root/visdrone/<split>/...``).
+    ``source_split`` selects which official VisDrone folder
+    (``VisDrone2019-MOT-<source_split>``) the raw images/annotations are read
+    from, and defaults to ``split`` when omitted. They differ when
+    re-splitting the official data into a custom train/val/test assignment
+    (e.g. reading a sequence from the official ``val`` folder but labeling it
+    ``train`` in our unified split).
+    """
 
     source_root = Path(source_root)
     output_root = Path(output_root)
-    sequences_dir, annotations_dir = _find_visdrone_layout(source_root, split)
+    sequences_dir, annotations_dir = _find_visdrone_layout(source_root, source_split or split)
 
     requested_sequences = read_sequence_list(sequence_list)
     annotation_paths = {path.stem: path for path in annotations_dir.glob("*.txt")}
