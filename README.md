@@ -55,6 +55,15 @@ python scripts/visualize_dataset_samples.py `
   --num-samples 12
 ```
 
+Run the full converted-dataset verifier:
+
+```powershell
+python scripts/verify_converted_dataset.py `
+  --unified-root data/unified `
+  --report-path outputs/dataset_verification_report.md `
+  --json-path outputs/dataset_verification_report.json
+```
+
 ## Implemented So Far
 
 - VisDrone2019-MOT converter.

@@ -1,0 +1,27 @@
+name: jmdst
+
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - pillow
+  - scipy
+  - pyyaml
+  - tqdm
+  - opencv
+  - matplotlib
+  - pytorch
+  - torchvision
+  - pip:
+      - ultralytics
+      - motmetrics
+
+# Notes:
+# - mamba-ssm is intentionally omitted for now; install it later when MSFP is implemented.
+# - For CUDA through conda, add a compatible pytorch-cuda package from the pytorch/nvidia channels.

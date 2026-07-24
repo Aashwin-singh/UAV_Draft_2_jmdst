@@ -1,19 +1,12 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-data/
-checkpoints/
-runs/
-logs/
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv/
@@ -32,21 +25,30 @@ conda-meta/
 
 # Logs
 *.log
+logs/
 
 # Model checkpoints
+checkpoints/
+runs/
+wandb/
+mlruns/
 *.pt
 *.pth
 *.ckpt
+*.onnx
+*.engine
+*.weights
 
 # Outputs
 outputs/
 !outputs/verification_samples/
 !outputs/verification_samples/*.png
 
-# Large datasets
-VisDrone_MOT/
-UAVDT/
-data/unified/
+# Large datasets (root-level only — do not shadow jmdst/data, the source package)
+/data/
+/Datasets/
+/VisDrone_MOT/
+/UAVDT/
 
 # OS files
 .DS_Store
