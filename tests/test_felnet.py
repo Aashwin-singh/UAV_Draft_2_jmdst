@@ -5,7 +5,13 @@ import unittest
 import torch
 
 from jmdst.data.crops import anchor_boxes, overlap_vector
-from jmdst.models import FELNet, FELNetConfig, decode_boxes, select_anchor_output
+from jmdst.models import (
+    FELNet,
+    FELNetConfig,
+    anchor_reference_overlaps,
+    decode_boxes,
+    select_anchor_output,
+)
 
 
 class FELNetArchitectureTests(unittest.TestCase):
@@ -111,61 +117,77 @@ class DecodeAndSelectionTests(unittest.TestCase):
         decoded = decode_boxes(overlap, anchors)
         self.assertEqual(decoded.shape, (5, 4, 4))
 
-    def test_select_anchor_output_picks_nearest_confident_anchor(self) -> None:
-        reference = torch.tensor([[10.0, 10.0, 10.0, 10.0]])
-        overlap = torch.tensor(
-            [[
-                [10.0, 10.0, 10.0, 10.0],  # exact match, but low confidence
-                [11.0, 10.0, 10.0, 10.0],  # near match, confident  <- expected
-                [50.0, 50.0, 50.0, 50.0],  # far, confident
-                [10.0, 10.0, 10.0, 10.0],  # exact match, low confidence
-            ]]
-        )
-        confidence = torch.tensor([[0.5, 0.95, 0.99, 0.1]])
+    def test_reference_overlaps_match_training_target_formula(self) -> None:
+        # anchor_reference_overlaps must compute exactly what make_felnet_targets
+        # would have used as ground truth, had this box truly belonged to each
+        # anchor -- i.e. overlap_vector(anchor, box) per anchor.
+        anchors_list = anchor_boxes(64, 2)
+        anchors = torch.tensor(anchors_list, dtype=torch.float32)
+        box = torch.tensor([10.0, 10.0, 10.0, 10.0])
 
-        selected = select_anchor_output(overlap, confidence, reference)
-        self.assertEqual(selected.tolist(), [1])
+        ref = anchor_reference_overlaps(box, anchors)
+        self.assertEqual(ref.shape, (4, 4))
+        for a in range(4):
+            expected = overlap_vector(anchors_list[a], box.tolist())
+            torch.testing.assert_close(ref[a], torch.tensor(expected, dtype=torch.float32))
 
-    def test_select_anchor_output_falls_back_when_none_confident(self) -> None:
-        reference = torch.tensor([[10.0, 10.0, 10.0, 10.0]])
-        overlap = torch.tensor(
-            [[
-                [99.0, 99.0, 99.0, 99.0],
-                [10.0, 10.0, 10.0, 10.0],
-                [50.0, 50.0, 50.0, 50.0],
-                [20.0, 20.0, 20.0, 20.0],
-            ]]
-        )
-        # Nothing clears the 0.9 threshold -> highest-confidence anchor (idx 2).
-        confidence = torch.tensor([[0.1, 0.4, 0.8, 0.2]])
+    def test_reference_overlaps_batch_broadcast(self) -> None:
+        anchors = torch.tensor(anchor_boxes(64, 2), dtype=torch.float32)
+        boxes = torch.rand(5, 4) * 20 + 5
+        ref = anchor_reference_overlaps(boxes, anchors)
+        self.assertEqual(ref.shape, (5, 4, 4))
 
-        selected = select_anchor_output(overlap, confidence, reference)
-        self.assertEqual(selected.tolist(), [2])
 
-    def test_select_anchor_output_handles_mixed_batch(self) -> None:
-        reference = torch.tensor([[10.0, 10.0, 10.0, 10.0], [0.0, 0.0, 0.0, 0.0]])
-        overlap = torch.tensor(
-            [
-                [
-                    [10.0, 10.0, 10.0, 10.0],
-                    [30.0, 30.0, 30.0, 30.0],
-                    [40.0, 40.0, 40.0, 40.0],
-                    [50.0, 50.0, 50.0, 50.0],
-                ],
-                [
-                    [5.0, 5.0, 5.0, 5.0],
-                    [1.0, 1.0, 1.0, 1.0],
-                    [9.0, 9.0, 9.0, 9.0],
-                    [7.0, 7.0, 7.0, 7.0],
-                ],
-            ]
-        )
-        # Sample 0: anchors 0 and 1 confident -> nearest is 0.
-        # Sample 1: none confident -> fallback to argmax confidence = 2.
-        confidence = torch.tensor([[0.95, 0.99, 0.2, 0.1], [0.3, 0.5, 0.7, 0.4]])
+class SelectAnchorOutputTests(unittest.TestCase):
+    """Tests for the paper's Sec. 2.2 inference-time anchor selection rule.
 
-        selected = select_anchor_output(overlap, confidence, reference)
-        self.assertEqual(selected.tolist(), [0, 2])
+    Each anchor's own reference overlap (what it *should* predict for a given
+    candidate box, per anchor_reference_overlaps) trivially has zero distance
+    to itself, so a meaningful "nearest anchor" test must deliberately
+    perturb the non-target anchors' predicted overlaps away from their own
+    reference -- otherwise every anchor is equidistant (0) from its own
+    reference and the test can't distinguish selection logic from a tie.
+    """
+
+    def setUp(self) -> None:
+        self.anchors = torch.tensor(anchor_boxes(64, 2), dtype=torch.float32)
+
+    def test_picks_nearest_confident_anchor(self) -> None:
+        box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])  # sits inside anchor 0
+        reference = anchor_reference_overlaps(box, self.anchors)  # (1, 4, 4)
+
+        overlap = reference.clone()
+        overlap[0, 1] += 0.01  # anchor 1: near-exact match, but low confidence
+        overlap[0, 2] += 20.0  # anchor 2: far off, high confidence
+        overlap[0, 3] += 20.0  # anchor 3: far off, high confidence
+        # anchor 0 left untouched -> exact match (distance 0), high confidence.
+
+        confidence = torch.tensor([[0.95, 0.10, 0.99, 0.99]])
+        selected = select_anchor_output(overlap, confidence, box, self.anchors)
+        self.assertEqual(selected.tolist(), [0])
+
+    def test_falls_back_when_none_confident(self) -> None:
+        box = torch.tensor([[10.0, 10.0, 10.0, 10.0]])
+        reference = anchor_reference_overlaps(box, self.anchors)
+        confidence = torch.tensor([[0.1, 0.4, 0.8, 0.2]])  # nothing clears 0.9
+
+        selected = select_anchor_output(overlap=reference, confidence=confidence, predicted_box_xywh=box, anchors_xywh=self.anchors)
+        self.assertEqual(selected.tolist(), [2])  # falls back to argmax confidence
+
+    def test_handles_mixed_batch(self) -> None:
+        # Sample 0's box sits in anchor 0's quadrant, sample 1's in anchor 3's.
+        boxes = torch.tensor([[10.0, 10.0, 10.0, 10.0], [40.0, 40.0, 10.0, 10.0]])
+        reference = anchor_reference_overlaps(boxes, self.anchors)  # (2, 4, 4)
+
+        overlap = reference.clone()
+        # Sample 0: corrupt anchors 1-3 away from their own reference.
+        overlap[0, 1:] += 20.0
+        # Sample 1: corrupt anchors 0-2 away from their own reference.
+        overlap[1, :3] += 20.0
+
+        confidence = torch.tensor([[0.95, 0.99, 0.99, 0.99], [0.99, 0.99, 0.99, 0.95]])
+        selected = select_anchor_output(overlap, confidence, boxes, self.anchors)
+        self.assertEqual(selected.tolist(), [0, 3])
 
 
 if __name__ == "__main__":

@@ -209,10 +209,44 @@ def decode_boxes(overlap: Tensor, anchors_xywh: Tensor) -> Tensor:
     )
 
 
+def anchor_reference_overlaps(predicted_box_xywh: Tensor, anchors_xywh: Tensor) -> Tensor:
+    """Per-anchor reference overlap vectors for a predicted box (paper Eq. 1).
+
+    For each anchor a, computes "the overlap vector this anchor's output
+    *should* equal if it were responsible for this box" -- exactly the same
+    formula ``make_felnet_targets`` uses to build ground-truth labels during
+    training (anchor plays the role of B_S, the predicted box plays B_H).
+    This is intentionally per-anchor (not one shared vector): a full-crop-
+    relative and a 32x32-anchor-relative overlap live at different scales, so
+    only a like-for-like per-anchor reference is comparable to that anchor's
+    prediction.
+
+    Args:
+        predicted_box_xywh: (..., 4) predicted box, SSI pixel coordinates.
+        anchors_xywh: (A, 4) fixed anchor boxes, SSI pixel coordinates.
+
+    Returns:
+        (..., A, 4) reference overlap vectors, one per anchor.
+    """
+
+    l1, u1, w1, h1 = anchors_xywh.unbind(-1)  # each (A,)
+    l2 = predicted_box_xywh[..., 0:1]  # (..., 1), broadcasts against (A,)
+    u2 = predicted_box_xywh[..., 1:2]
+    w2 = predicted_box_xywh[..., 2:3]
+    h2 = predicted_box_xywh[..., 3:4]
+
+    o1 = (l1 + w1 - l2).clamp(min=0)
+    o2 = (l2 + w2 - l1).clamp(min=0)
+    o3 = (u1 + h1 - u2).clamp(min=0)
+    o4 = (u2 + h2 - u1).clamp(min=0)
+    return torch.stack((o1, o2, o3, o4), dim=-1)
+
+
 def select_anchor_output(
     overlap: Tensor,
     confidence: Tensor,
-    reference_overlap: Tensor,
+    predicted_box_xywh: Tensor,
+    anchors_xywh: Tensor,
     confidence_threshold: float = 0.9,
 ) -> Tensor:
     """Pick the best anchor per sample, following the paper's Sec. 2.2 rule.
@@ -223,11 +257,17 @@ def select_anchor_output(
     by FELNet. Among the output sets with confidence greater than 0.9, the one
     with the smallest Euclidean distance is selected."
 
+    "Relative to the cropped image" is per-anchor here (see
+    ``anchor_reference_overlaps``): each anchor's prediction is compared
+    against its *own* reference overlap, not a single shared vector, since
+    each anchor's overlap output is only meaningful relative to its own
+    32x32 sub-region.
+
     Args:
         overlap: (B, A, 4) predicted overlap vectors.
         confidence: (B, A) predicted confidences in [0, 1].
-        reference_overlap: (B, 4) overlap vector of the Kalman-predicted box
-            relative to the SSI crop.
+        predicted_box_xywh: (B, 4) Kalman-predicted box, in SSI pixel coords.
+        anchors_xywh: (A, 4) fixed anchor boxes, in SSI pixel coords.
         confidence_threshold: paper's 0.9 floor.
 
     Returns:
@@ -236,7 +276,8 @@ def select_anchor_output(
         anchor, so a selection is always defined.
     """
 
-    distances = torch.linalg.vector_norm(overlap - reference_overlap.unsqueeze(1), dim=-1)
+    reference = anchor_reference_overlaps(predicted_box_xywh, anchors_xywh)
+    distances = torch.linalg.vector_norm(overlap - reference, dim=-1)
 
     eligible = confidence > confidence_threshold
     masked = distances.masked_fill(~eligible, float("inf"))
