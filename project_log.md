@@ -28,10 +28,15 @@ are we" snapshot, updated as phases complete.
   use a low `--patience` (e.g. `--patience 10`) to stop automatically instead
   of burning the full epoch budget:
   `python scripts/train_yolo.py --data data/yolo/dataset.yaml --model yolo11n.pt --epochs 100 --patience 10 --name retrain_early_stop`
-- **Phase 3 (starting now)**: FELNet architecture.
+- **Phase 3 done**: FELNet architecture in `jmdst/models/felnet.py` (paper
+  Table 1 exactly — Darknet-derived backbone + 3 conv heads for overlap /
+  16-D embedding / confidence), plus `decode_boxes` (Eq. 2) and
+  `select_anchor_output` (Sec. 2.2 selection rule). 20 unit tests pass;
+  4.35M params, ~0.14 ms/SSI @ batch 32 on the 4070. Architecture only, no
+  training yet.
 
-**Not yet started**: FELNet training (Phase 4), feature extraction (Phase 5),
-MSFP/Mamba (Phase 6, blocked on `mamba-ssm` installing), tracking
+**Not yet started**: FELNet training (Phase 4 — next up), feature extraction
+(Phase 5), MSFP/Mamba (Phase 6, blocked on `mamba-ssm` installing), tracking
 infrastructure (Phase 7), modified DeepSORT (Phase 8), full pipeline
 integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
 
@@ -39,9 +44,6 @@ integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
 
 Good parallel work is either CPU-only, or independent of whatever's
 currently using the GPU:
-
-Phase 3 (FELNet architecture) is being started in this session — check
-`git log` before picking it up yourself to avoid duplicate work.
 
 1. **Tracking infrastructure (Phase 7)** — Kalman filter (predict/update for
    bounding boxes) and the tracklet state machine (tentative -> confirmed ->
