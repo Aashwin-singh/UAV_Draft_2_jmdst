@@ -35,10 +35,24 @@ are we" snapshot, updated as phases complete.
   4.35M params, ~0.14 ms/SSI @ batch 32 on the 4070. Architecture only, no
   training yet.
 
-**Not yet started**: FELNet training (Phase 4 — next up), feature extraction
-(Phase 5), MSFP/Mamba (Phase 6, blocked on `mamba-ssm` installing), tracking
-infrastructure (Phase 7), modified DeepSORT (Phase 8), full pipeline
-integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
+- **Phase 4 done (pipeline)**: FELNet training pipeline — episode sampler
+  (`jmdst/data/felnet_episode.py`, paper Algorithm 2's dense random
+  sampling), three RMSE losses (`jmdst/training/felnet_loss.py`), and
+  `scripts/train_felnet.py` (Adam + cosine annealing). 25 tests pass;
+  verified a real GPU run trains/saves/reloads. Timing ~75 ms/step
+  (I/O-bound on image decode). **The full FELNet training run itself has not
+  been done yet** — see command + time estimate below. No trained FELNet
+  checkpoint exists yet, so Phase 5 (feature extraction) is still blocked on
+  running it.
+
+  Recommended full run (~35 min on the RTX 4070):
+  `python scripts/train_felnet.py --epochs 50 --steps-per-epoch 500 --episodes-per-step 2 --num-workers 8 --name full_run`
+
+**Not yet started**: run the FELNet training (Phase 4 execution), feature
+extraction (Phase 5), MSFP/Mamba (Phase 6, blocked on `mamba-ssm`
+installing), tracking infrastructure (Phase 7), modified DeepSORT (Phase 8),
+full pipeline integration (Phase 9), evaluation (Phase 10), ablations
+(Phase 11).
 
 ## What a teammate can work on right now, in parallel
 
