@@ -54,42 +54,76 @@ are we" snapshot, updated as phases complete.
   via the same formula training's ground-truth targets use
   (`anchor_reference_overlaps`). This only affects inference-time selection
   (Phase 7+), not the already-completed training run.
-- **Phase 5 done (pipeline)**: feature extraction (`jmdst/data/features.py`,
+- **Phase 5 done**: feature extraction (`jmdst/data/features.py`,
   `scripts/extract_features.py`) runs FELNet over unified sequences and saves
   per-object embeddings grouped by track id — MSFP's (Phase 6) training
-  input. Verified on a real sequence (5,404 objects in 12.7s on GPU).
-  **The full extraction run itself has not been done yet**:
-  `python scripts/extract_features.py --checkpoint outputs/felnet_runs/full_run/best.pt --unified-root data/unified --output-root data/features --splits train val test`
-  (~35-40 min estimated, based on the measured per-object rate over all
-  929,343 annotations).
+  input. Full extraction run completed and verified: 929,343 object
+  embeddings (exact match to the Phase 1 annotation count — nothing lost or
+  duplicated), 4,985 track sequences (exact match to unique-track-ID count),
+  0 non-finite embeddings, embedding L2 norms deviate from 1.0 by 0.000000
+  across the entire dataset. Track length distribution is healthy for MSFP:
+  median 133 frames/track, only 0.9% single-frame fragments. Saved under
+  `data/features/<dataset>/<split>/<sequence>.npz` (gitignored, regenerate
+  with the command in Phase 5's original entry above if needed).
 
-**Not yet started**: run the feature extraction (Phase 5 execution),
-MSFP/Mamba (Phase 6, blocked on `mamba-ssm` installing), tracking
-infrastructure (Phase 7), modified DeepSORT (Phase 8), full pipeline
-integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
+- **Phase 6 (MSFP) still blocked on `mamba-ssm`** — root cause now fully
+  diagnosed (see below), decided not to sink more time into it right now.
+
+  **mamba-ssm investigation writeup** (so nobody re-does this from scratch):
+  CUDA Toolkit 12.8 + VS Build Tools (C++ workload) got installed and
+  verified (`nvcc --version` confirms 12.8.61, matching torch's cu128 build).
+  Getting `pip install mamba-ssm --no-build-isolation` to even reach the
+  compile step needed two extra fixes, both real and necessary but not
+  sufficient: (1) `cl.exe` isn't on PATH by default — MSVC needs
+  `vcvarsall.bat x64` run in the *same* process as the pip install (its env
+  vars don't persist across separate shell invocations, so `conda activate`
+  + `vcvarsall.bat` + `pip install` all need to happen in one script block);
+  (2) once the VC env is manually activated this way, PyTorch's build
+  requires `DISTUTILS_USE_SDK=1` to be set too, or it raises a clear error
+  telling you so. With both fixed, the build reached actual compilation —
+  and then failed because **the PyPI `mamba-ssm` sdist (checked 2.2.4, and
+  by extension likely all versions) is missing its own `csrc/` directory**.
+  `setup.py` explicitly lists `csrc/selective_scan/selective_scan.cpp` and
+  9 `.cu` kernel files as required sources; none of them exist anywhere in
+  the downloaded/extracted package (confirmed: `grep csrc setup.py` lists
+  them, `grep csrc mamba_ssm.egg-info/SOURCES.txt` returns nothing). This
+  isn't a Windows-specific bug — the source genuinely isn't in the sdist,
+  so building from PyPI's source package can't work on any OS. mamba-ssm
+  publishes prebuilt Linux wheels via GitHub Releases instead, which is
+  presumably why this gap in the sdist has gone unnoticed.
+
+  **Real paths forward, not yet tried**: (a) clone the official
+  `state-spaces/mamba` GitHub repo directly (has the complete source
+  including `csrc/`) and build from that checkout instead of PyPI — untested
+  whether other Windows-specific compile issues surface once real source is
+  present; (b) use WSL2, which sidesteps this whole class of Windows-build
+  issues and can use the official prebuilt approach. Either is a genuinely
+  open-ended time investment (real CUDA kernel compilation is commonly
+  10-30+ min even when everything's configured correctly), so it's deferred
+  rather than attempted unprompted — whoever picks this up next should treat
+  it as its own task, not a quick add-on.
+
+**Not yet started**: MSFP/Mamba (Phase 6, see above), tracking
+infrastructure (Phase 7 — starting now), modified DeepSORT (Phase 8), full
+pipeline integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
 
 ## What a teammate can work on right now, in parallel
 
-Good parallel work is either CPU-only, or independent of whatever's
-currently using the GPU:
+Phase 7 (tracking infrastructure — Kalman filter, tentative/confirmed/deleted
+state machine, `PROJECT_CONTEXT.md` Section A.6) is being started in this
+session — check `git log` before picking it up yourself to avoid duplicate
+work.
 
-1. **Tracking infrastructure (Phase 7)** — Kalman filter (predict/update for
-   bounding boxes) and the tracklet state machine (tentative -> confirmed ->
-   deleted, `PROJECT_CONTEXT.md` Section A.6). Pure algorithmic Python, no
-   ML training or GPU involved, fully testable with synthetic trajectories
-   without waiting on YOLO or FELNet.
+**Evaluation metrics scaffolding (Phase 10)** is still open and good parallel
+work: `motmetrics` is already installed. A script that takes predicted +
+ground-truth trajectories in a standard format and computes
+MOTA/MOTP/IDF1/HOTA (formulas in `PROJECT_CONTEXT.md` A.9 / paper Sec 3.2)
+can be built and tested against synthetic/toy trajectories now, ready to
+point at real tracker output later. Pure CPU work, no GPU/ML dependency.
 
-2. **Evaluation metrics scaffolding (Phase 10)** — `motmetrics` is already
-   installed. A script that takes predicted + ground-truth trajectories in a
-   standard format and computes MOTA/MOTP/IDF1/HOTA (formulas in
-   `PROJECT_CONTEXT.md` A.9 / paper Sec 3.2) can be built and tested against
-   synthetic/toy trajectories now, ready to point at real tracker output
-   later.
-
-Phase 6 (MSFP) needs Phase 5's extracted features to exist first (run the
-extraction command above). Avoid running anything large on the GPU at the
-same time as anyone else, to avoid slowing both down / an out-of-memory
-error on the 8GB laptop GPU.
+If anyone wants to tackle the mamba-ssm build (see the writeup above)
+instead, that's also independent of everything else — just don't run a long
+GPU training job at the same time as someone else on the same machine.
 
 ## Setting up a fresh clone (if a teammate is on a different machine)
 
