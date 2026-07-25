@@ -35,24 +35,38 @@ are we" snapshot, updated as phases complete.
   4.35M params, ~0.14 ms/SSI @ batch 32 on the 4070. Architecture only, no
   training yet.
 
-- **Phase 4 done (pipeline)**: FELNet training pipeline — episode sampler
-  (`jmdst/data/felnet_episode.py`, paper Algorithm 2's dense random
-  sampling), three RMSE losses (`jmdst/training/felnet_loss.py`), and
-  `scripts/train_felnet.py` (Adam + cosine annealing). 25 tests pass;
-  verified a real GPU run trains/saves/reloads. Timing ~75 ms/step
-  (I/O-bound on image decode). **The full FELNet training run itself has not
-  been done yet** — see command + time estimate below. No trained FELNet
-  checkpoint exists yet, so Phase 5 (feature extraction) is still blocked on
-  running it.
+- **Phase 4 done**: FELNet training pipeline (episode sampler in
+  `jmdst/data/felnet_episode.py` per paper Algorithm 2, three RMSE losses in
+  `jmdst/training/felnet_loss.py`, `scripts/train_felnet.py`). Full 50-epoch
+  run completed: `outputs/felnet_runs/full_run/best.pt` (not committed —
+  gitignored). Held-out (val-split) evaluation via `scripts/eval_felnet.py`:
+  embedding branch generalizes well (same-identity vs different-identity
+  cosine similarity separation 0.65 — the critical signal for Phase 8
+  matching); overlap/localization branch has a real train/val gap (mean IoU
+  ~0.65 at the paper's confidence-based anchor selection, some overfitting).
+  Decided to proceed rather than retrain now — revisit localization tuning
+  later if Phase 7-9 tracking accuracy suffers.
+  **Bug found and fixed** in `select_anchor_output` (the paper's Sec 2.2
+  inference-time anchor-selection rule, in `jmdst/models/felnet.py`): it was
+  comparing all 4 anchors against one shared reference overlap vector, which
+  is dimensionally wrong (a full-crop-relative overlap isn't comparable to a
+  32x32-anchor-relative one). Fixed to compute a correct per-anchor reference
+  via the same formula training's ground-truth targets use
+  (`anchor_reference_overlaps`). This only affects inference-time selection
+  (Phase 7+), not the already-completed training run.
+- **Phase 5 done (pipeline)**: feature extraction (`jmdst/data/features.py`,
+  `scripts/extract_features.py`) runs FELNet over unified sequences and saves
+  per-object embeddings grouped by track id — MSFP's (Phase 6) training
+  input. Verified on a real sequence (5,404 objects in 12.7s on GPU).
+  **The full extraction run itself has not been done yet**:
+  `python scripts/extract_features.py --checkpoint outputs/felnet_runs/full_run/best.pt --unified-root data/unified --output-root data/features --splits train val test`
+  (~35-40 min estimated, based on the measured per-object rate over all
+  929,343 annotations).
 
-  Recommended full run (~35 min on the RTX 4070):
-  `python scripts/train_felnet.py --epochs 50 --steps-per-epoch 500 --episodes-per-step 2 --num-workers 8 --name full_run`
-
-**Not yet started**: run the FELNet training (Phase 4 execution), feature
-extraction (Phase 5), MSFP/Mamba (Phase 6, blocked on `mamba-ssm`
-installing), tracking infrastructure (Phase 7), modified DeepSORT (Phase 8),
-full pipeline integration (Phase 9), evaluation (Phase 10), ablations
-(Phase 11).
+**Not yet started**: run the feature extraction (Phase 5 execution),
+MSFP/Mamba (Phase 6, blocked on `mamba-ssm` installing), tracking
+infrastructure (Phase 7), modified DeepSORT (Phase 8), full pipeline
+integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
 
 ## What a teammate can work on right now, in parallel
 
@@ -72,11 +86,10 @@ currently using the GPU:
    synthetic/toy trajectories now, ready to point at real tracker output
    later.
 
-Avoid starting Phase 4 (FELNet *training*) until Phase 3 (FELNet
-architecture) is committed, since it depends on the model class existing.
-Also avoid training anything large on the GPU at the same time as anyone
-else, to avoid slowing both down / an out-of-memory error on the 8GB laptop
-GPU.
+Phase 6 (MSFP) needs Phase 5's extracted features to exist first (run the
+extraction command above). Avoid running anything large on the GPU at the
+same time as anyone else, to avoid slowing both down / an out-of-memory
+error on the 8GB laptop GPU.
 
 ## Setting up a fresh clone (if a teammate is on a different machine)
 
