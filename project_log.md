@@ -103,19 +103,28 @@ are we" snapshot, updated as phases complete.
   rather than attempted unprompted — whoever picks this up next should treat
   it as its own task, not a quick add-on.
 
-**Not yet started**: MSFP/Mamba (Phase 6, see above), tracking
-infrastructure (Phase 7 — starting now), modified DeepSORT (Phase 8), full
-pipeline integration (Phase 9), evaluation (Phase 10), ablations (Phase 11).
+- **Phase 7 done**: tracking infrastructure in `jmdst/tracking/` —
+  `kalman_filter.py` (standard DeepSORT 8-D constant-velocity Kalman filter
+  over `[cx, cy, aspect_ratio, height]`; the paper says "modified DeepSORT"
+  but doesn't specify Kalman internals, so this is the faithful standard
+  baseline) and `track.py` (the `Track` class implementing A.6's
+  tentative/confirmed/deleted state machine exactly: N=tau+1=4 consecutive
+  detections to confirm, 100-miss deletion for confirmed tracks, immediate
+  deletion for unconfirmed ones). 15 new tests (42 total), all passing —
+  Kalman numerical correctness, bbox<->state round trips, and every
+  state-machine rule from A.6. Scope note: this is just the building blocks;
+  cascade/IoU matching, missed-detection expansion, and output filtering are
+  Phase 8 (modified DeepSORT), not yet started.
+
+**Not yet started**: MSFP/Mamba (Phase 6, see above), modified DeepSORT
+(Phase 8 — cascade matching + IoU assignment using Phase 7's Track class and
+Phase 3-5's FELNet embeddings), full pipeline integration (Phase 9),
+evaluation (Phase 10), ablations (Phase 11).
 
 ## What a teammate can work on right now, in parallel
 
-Phase 7 (tracking infrastructure — Kalman filter, tentative/confirmed/deleted
-state machine, `PROJECT_CONTEXT.md` Section A.6) is being started in this
-session — check `git log` before picking it up yourself to avoid duplicate
-work.
-
-**Evaluation metrics scaffolding (Phase 10)** is still open and good parallel
-work: `motmetrics` is already installed. A script that takes predicted +
+**Evaluation metrics scaffolding (Phase 10)** is open and good parallel work:
+`motmetrics` is already installed. A script that takes predicted +
 ground-truth trajectories in a standard format and computes
 MOTA/MOTP/IDF1/HOTA (formulas in `PROJECT_CONTEXT.md` A.9 / paper Sec 3.2)
 can be built and tested against synthetic/toy trajectories now, ready to
@@ -124,6 +133,11 @@ point at real tracker output later. Pure CPU work, no GPU/ML dependency.
 If anyone wants to tackle the mamba-ssm build (see the writeup above)
 instead, that's also independent of everything else — just don't run a long
 GPU training job at the same time as someone else on the same machine.
+
+Phase 8 (modified DeepSORT) is a natural next session's work — it directly
+consumes Phase 7's `Track`/`KalmanFilter` and Phase 3-5's FELNet embeddings,
+so check `git log` before starting it to avoid duplicate work if picked up
+in parallel.
 
 ## Setting up a fresh clone (if a teammate is on a different machine)
 
