@@ -143,9 +143,30 @@ are we" snapshot, updated as phases complete.
     the tracking branch calls `track.update` per tracked target, then the
     survivors/filtered outputs update trajectories.
 
-**Not yet started**: MSFP/Mamba (Phase 6, see above), full pipeline
-integration (Phase 9 — wire YOLO -> SSI crop -> FELNet -> modified DeepSORT
-into Algorithm 1's dual-branch routine), evaluation (Phase 10), ablations
+- **Phase 9 done**: full JMDST integration in `jmdst/pipeline/`.
+  `jmdst.py` (`JMDSTTracker`: Algorithm 1's dual-branch routine — detection
+  branch every tau frames via YOLO+FELNet+Tracker, tracking branch on other
+  frames via Kalman-predict -> SSI crop -> FELNet localize/refine -> update,
+  with the base/expansion split and c1/i1/i2 output filtering). `models.py`
+  (`YoloDetector`, `FELNetLocalizer`, `build_jmdst` factory). Branch logic
+  is model-agnostic (injected detector/localizer callables) so it's unit-
+  tested with mocks. `scripts/run_jmdst.py` writes MOT-format results (Phase
+  10 input). 5 new tests (72 total). Real end-to-end run on 3 UAVDT val
+  sequences: ~30-36 FPS (exceeds the paper's 26.6 on UAVDT), 0 duplicate IDs
+  per frame, clean stable-ID output, 0 invalid boxes.
+  - Two robustness fixes found only via real-data runs (mocks can't surface
+    them): FELNet overlap->box decode can be degenerate on off-target crops
+    -> `FELNetLocalizer` falls back to the input box; the Kalman box can be
+    transiently degenerate for tiny shrinking targets (position stays valid,
+    height/aspect overshoots for one frame) -> `_confirmed_outputs` skips
+    that frame's output, track survives internally.
+  - **Command to generate full MOT results** (for Phase 10 eval):
+    `python scripts/run_jmdst.py --yolo outputs/yolo_runs/full_run/weights/best.pt --felnet outputs/felnet_runs/full_run/best.pt --datasets uavdt visdrone --split val --tau 3`
+    (drop `--max-frames`; ~30 FPS so a full split is minutes, not hours).
+
+**Not yet started**: MSFP/Mamba (Phase 6, see above), evaluation (Phase 10 —
+score `scripts/run_jmdst.py`'s MOT output against GT with motmetrics:
+MOTA/MOTP/IDF1/HOTA/FPS), ablations
 (Phase 11).
 
 ## What a teammate can work on right now, in parallel
@@ -161,11 +182,10 @@ If anyone wants to tackle the mamba-ssm build (see the writeup above)
 instead, that's also independent of everything else — just don't run a long
 GPU training job at the same time as someone else on the same machine.
 
-Phase 9 (full integration) is the natural next step — it wires YOLO ->
-SSI crop -> FELNet -> the Phase 8 `Tracker` into Algorithm 1's dual-branch
-routine. See the "Phase 9 wiring insight" note under Phase 8 above for the
-one non-obvious requirement (the tracking branch must call `track.update`
-per target so tracklets can confirm). Check `git log` before starting it to
+Phase 10 (evaluation) is the natural next step now that Phase 9's pipeline
+produces MOT-format output: score `scripts/run_jmdst.py`'s results against
+the unified GT with `motmetrics` (MOTA/MOTP/IDF1/HOTA + FPS). Check `git log`
+before starting it to
 avoid duplicate work if picked up in parallel.
 
 ## Setting up a fresh clone (if a teammate is on a different machine)
