@@ -164,10 +164,40 @@ are we" snapshot, updated as phases complete.
     `python scripts/run_jmdst.py --yolo outputs/yolo_runs/full_run/weights/best.pt --felnet outputs/felnet_runs/full_run/best.pt --datasets uavdt visdrone --split val --tau 3`
     (drop `--max-frames`; ~30 FPS so a full split is minutes, not hours).
 
-**Not yet started**: MSFP/Mamba (Phase 6, see above), evaluation (Phase 10 —
-score `scripts/run_jmdst.py`'s MOT output against GT with motmetrics:
-MOTA/MOTP/IDF1/HOTA/FPS), ablations
-(Phase 11).
+- **Phase 10 done**: evaluation in `jmdst/eval/` (+ `scripts/evaluate.py`).
+  `metrics.py` (motmetrics wrapper: MOTA/MOTP/IDF1/IDs/FP/FN, with a
+  `np.asfarray` shim for NumPy 2.0 and MOTP converted to the paper's mean-IoU
+  convention), `hota.py` (HOTA/DetA/AssA implemented from scratch — no
+  available lib has it; unit-tested against known cases), `io.py` (loads
+  unified GT + MOT-format predictions). 9 new tests (81 total).
+  - **First real numbers, UAVDT val (tau=3, 41.5 FPS inference)**: overall
+    MOTA 3.0, MOTP 77.2, IDF1 43.6, HOTA 34.7 (DetA 31.8, AssA 38.0). These
+    are LOW and the causes are diagnosed (NOT a pipeline bug — the M0203
+    result proves the integration is sound):
+    - **M0203**: GT 5.4 vs pipeline 5.5 boxes/frame -> MOTA **59.4**, MOTP
+      79.2. When detector output and annotation density align, the full
+      system tracks well.
+    - **M1101**: GT 8.8 vs pipeline 17.2 -> FP-dominated (9119 FP, MOTA
+      -46.2). YOLO detects ~15 real cars/frame but UAVDT labels only ~8.8
+      (UAVDT's sparse annotation / ignore-region protocol, which our
+      simplified eval does NOT replicate — those extra detections are real
+      cars scored as FP). Confirmed YOLO fires only "car" here (no
+      class-mismatch FP).
+    - **M0401**: GT 16.2 vs pipeline 12.3 -> FN-dominated (5686 FN, MOTA
+      9.8). Dense scene; the known Phase-2 YOLO overfitting hurts recall.
+  - **Improvement levers** (for whoever pushes accuracy, in rough priority):
+    (1) UAVDT ignore-region handling in eval + conversion (biggest UAVDT
+    win); (2) a better-generalizing YOLO (retrain with early stopping / more
+    augmentation / per-dataset detectors — the Phase 2 overfitting is the
+    root detector weakness); (3) tracker FP tuning (lower `max_age`, revisit
+    the expansion set). Don't over-tune to val — keep test held out for the
+    final Phase 11 comparison.
+  - **Command to evaluate** (after generating predictions with run_jmdst):
+    `python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val --report outputs/jmdst_results/uavdt_val_report.md`
+
+**Not yet started**: MSFP/Mamba (Phase 6, see above), ablations (Phase 11 —
+the paper's ablation study: without-MSFP, varying tau, YOLO-only, standard
+DeepSORT ReID vs FELNet; mirror paper Sec. 3.4).
 
 ## What a teammate can work on right now, in parallel
 
@@ -182,9 +212,12 @@ If anyone wants to tackle the mamba-ssm build (see the writeup above)
 instead, that's also independent of everything else — just don't run a long
 GPU training job at the same time as someone else on the same machine.
 
-Phase 10 (evaluation) is the natural next step now that Phase 9's pipeline
-produces MOT-format output: score `scripts/run_jmdst.py`'s results against
-the unified GT with `motmetrics` (MOTA/MOTP/IDF1/HOTA + FPS). Check `git log`
+Phase 11 (ablations) is the natural next step — mirror the paper's Sec. 3.4
+ablation study (without-MSFP, varying tau via `--tau`, YOLO-only baseline,
+standard-DeepSORT-ReID vs FELNet embeddings). Note MSFP-related ablations are
+blocked with Phase 6 on mamba-ssm. Also open: the Phase 10 improvement levers
+above (UAVDT ignore regions, better detector) if the goal is to close the gap
+to the paper's numbers. Check `git log`
 before starting it to
 avoid duplicate work if picked up in parallel.
 
