@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -69,6 +70,10 @@ def main() -> None:
 
     for dataset in args.datasets:
         sequence_dirs = iter_sequence_dirs(args.unified_root, dataset=dataset, split=args.split)
+        # Per-dataset timing (paper reports FPS per dataset). Timing covers only
+        # pipeline inference, excluding image decode, so it reflects tracker speed.
+        dataset_frames = 0
+        dataset_seconds = 0.0
         for sequence_dir in sequence_dirs:
             info, records = read_sequence(sequence_dir)
             image_size = (info.image_width, info.image_height)
@@ -79,25 +84,35 @@ def main() -> None:
             frames = records if args.max_frames is None else records[: args.max_frames]
             for record in frames:
                 image = Image.open(resolve_image_path(sequence_dir, record.image_path)).convert("RGB")
+                t0 = time.perf_counter()
                 outputs = jmdst.process_frame(image, image_size)
+                dataset_seconds += time.perf_counter() - t0
                 for out in outputs:
                     x, y, w, h = out.bbox_xywh
                     lines.append(
                         f"{record.frame_id},{out.track_id},{x:.2f},{y:.2f},{w:.2f},{h:.2f},{out.confidence:.4f},-1,-1,-1"
                     )
                 total_frames += 1
+                dataset_frames += 1
 
             out_path = output_root / dataset / args.split / f"{sequence_dir.name}.txt"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-            elapsed = time.perf_counter() - start
-            fps = total_frames / elapsed if elapsed > 0 else 0.0
+            fps = dataset_frames / dataset_seconds if dataset_seconds > 0 else 0.0
             print(
                 f"{dataset}/{args.split}/{sequence_dir.name}: {len(frames)} frames, "
                 f"{len(lines)} outputs -> {out_path}  ({fps:.1f} FPS avg)"
             )
 
-    print(f"\nDone: {total_frames} frames in {time.perf_counter()-start:.0f}s.")
+        # Record per-dataset timing beside its results so eval can report FPS.
+        dataset_fps = dataset_frames / dataset_seconds if dataset_seconds > 0 else 0.0
+        timing_path = output_root / dataset / args.split / "timing.json"
+        timing_path.write_text(
+            json.dumps({"frames": dataset_frames, "seconds": dataset_seconds, "fps": dataset_fps, "tau": args.tau}, indent=2),
+            encoding="utf-8",
+        )
+
+    print(f"\nDone: {total_frames} frames in {time.perf_counter()-start:.0f}s (wall).")
 
 
 if __name__ == "__main__":
