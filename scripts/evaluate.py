@@ -22,7 +22,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from jmdst.eval import compute_hota, evaluate_clearmot, load_ground_truth, load_mot_predictions
+from jmdst.eval import (
+    compute_hota,
+    evaluate_clearmot,
+    filter_predictions_by_ignore,
+    load_ground_truth,
+    load_ignore_regions,
+    load_mot_predictions,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--split", default="val")
     parser.add_argument("--iou-threshold", type=float, default=0.5, help="CLEAR MOT match IoU threshold.")
+    parser.add_argument(
+        "--no-ignore-regions",
+        action="store_true",
+        help="Disable UAVDT ignore-region filtering (score raw, as before). Default: apply if present.",
+    )
     parser.add_argument("--timing", default=None, help="Optional timing_<split>.json for FPS.")
     parser.add_argument("--report", default=None, help="Optional markdown report path.")
     parser.add_argument("--json", default=None, help="Optional JSON results path.")
@@ -84,6 +96,12 @@ def main() -> None:
     ground_truth = load_ground_truth(args.unified_root, args.dataset, args.split)
     predictions = load_mot_predictions(args.results)
     print(f"Loaded {len(ground_truth)} GT sequences, {len(predictions)} prediction files.")
+
+    if not args.no_ignore_regions:
+        ignore = load_ignore_regions(args.unified_root, args.dataset, args.split)
+        if ignore:
+            predictions, removed = filter_predictions_by_ignore(predictions, ground_truth, ignore)
+            print(f"Applied ignore-region filtering ({len(ignore)} sequences with regions): {removed} predictions dropped.")
 
     clearmot = evaluate_clearmot(ground_truth, predictions, iou_threshold=args.iou_threshold)
     hota = compute_hota(ground_truth, predictions)

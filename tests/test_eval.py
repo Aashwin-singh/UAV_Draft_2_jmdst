@@ -6,7 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
-from jmdst.eval import compute_hota, evaluate_clearmot, load_mot_predictions
+from jmdst.eval import (
+    compute_hota,
+    evaluate_clearmot,
+    filter_predictions_by_ignore,
+    load_mot_predictions,
+)
 
 
 def _box(x, y, w=20.0, h=20.0):
@@ -93,6 +98,50 @@ class HotaTests(unittest.TestCase):
         high = compute_hota(gt, pred, alphas=np.array([0.5]))
         self.assertGreater(low.hota, 0.0)  # matches at alpha=0.3
         self.assertAlmostEqual(high.hota, 0.0)  # no match at alpha=0.5
+
+
+class IgnoreRegionTests(unittest.TestCase):
+    def test_unmatched_prediction_in_ignore_region_removed(self) -> None:
+        # A prediction sitting inside an ignore region, matching no GT, is a
+        # would-be FP in a don't-care area -> dropped.
+        gt = {"seq": {1: [(1, _box(500, 400))]}}  # real GT far from the ignore region
+        pred = {"seq": {1: [(9, _box(10, 10))]}}  # inside ignore region below
+        ignore = {"seq": {1: [np.array([0.0, 0.0, 100.0, 100.0])]}}
+        filtered, removed = filter_predictions_by_ignore(pred, gt, ignore)
+        self.assertEqual(removed, 1)
+        self.assertEqual(filtered["seq"][1], [])
+
+    def test_true_positive_in_ignore_region_kept(self) -> None:
+        # A prediction inside an ignore region that DOES match a real GT box is
+        # a true positive and must be kept.
+        gt = {"seq": {1: [(1, _box(10, 10))]}}
+        pred = {"seq": {1: [(9, _box(10, 10))]}}  # matches GT (IoU 1) though in region
+        ignore = {"seq": {1: [np.array([0.0, 0.0, 100.0, 100.0])]}}
+        filtered, removed = filter_predictions_by_ignore(pred, gt, ignore)
+        self.assertEqual(removed, 0)
+        self.assertEqual(len(filtered["seq"][1]), 1)
+
+    def test_prediction_outside_ignore_region_kept(self) -> None:
+        gt = {"seq": {1: []}}
+        pred = {"seq": {1: [(9, _box(500, 500))]}}  # far from the ignore region
+        ignore = {"seq": {1: [np.array([0.0, 0.0, 100.0, 100.0])]}}
+        filtered, removed = filter_predictions_by_ignore(pred, gt, ignore)
+        self.assertEqual(removed, 0)
+        self.assertEqual(len(filtered["seq"][1]), 1)
+
+    def test_ignore_filtering_lowers_false_positives(self) -> None:
+        # End-to-end: spurious predictions in an ignore region inflate FP; after
+        # filtering, MOTA improves.
+        gt = {"seq": {f: [(1, _box(500, 400))] for f in range(1, 6)}}
+        pred = {"seq": {f: [(1, _box(500, 400)), (99, _box(10, 10))] for f in range(1, 6)}}
+        ignore = {"seq": {f: [np.array([0.0, 0.0, 100.0, 100.0])] for f in range(1, 6)}}
+
+        raw = evaluate_clearmot(gt, pred)["OVERALL"]
+        filtered, _ = filter_predictions_by_ignore(pred, gt, ignore)
+        cleaned = evaluate_clearmot(gt, filtered)["OVERALL"]
+        self.assertEqual(raw.false_positives, 5)  # the ghost box each frame
+        self.assertEqual(cleaned.false_positives, 0)
+        self.assertGreater(cleaned.mota, raw.mota)
 
 
 class LoadPredictionsTests(unittest.TestCase):

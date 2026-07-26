@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jmdst.data.io import write_sequence
@@ -130,6 +131,43 @@ def _read_uavdt_annotations(
     return dict(annotations_by_frame)
 
 
+def _read_uavdt_ignore_regions(annotation_path: Path, sequence_name: str) -> dict[int, list[list[float]]]:
+    """Parse UAVDT ``<seq>_gt_ignore.txt`` into {frame_id: [[x, y, w, h], ...]}.
+
+    Ignore regions are per-frame don't-care rectangles (unlabeled/ambiguous
+    areas). The official UAVDT MOT protocol discards predictions falling inside
+    them rather than counting them as false positives. Returns {} if the file
+    is absent. Ignore-file lines are: frame, region_id, x, y, w, h, ...
+    """
+
+    ignore_path = annotation_path.parent / f"{sequence_name}_gt_ignore.txt"
+    if not ignore_path.is_file():
+        return {}
+
+    regions: dict[int, list[list[float]]] = {}
+    with ignore_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            parts = parse_csv_line(line, min_fields=6)
+            if parts is None:
+                continue
+            frame_id = int(float(parts[0]))
+            x, y, w, h = (float(v) for v in parts[2:6])
+            if w <= 0 or h <= 0:
+                continue
+            regions.setdefault(frame_id, []).append([x, y, w, h])
+    return regions
+
+
+def _write_ignore_regions(sequence_dir: Path, regions: dict[int, list[list[float]]]) -> None:
+    if not regions:
+        return
+    path = sequence_dir / "ignore_regions.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        for frame_id in sorted(regions):
+            handle.write(json.dumps({"frame_id": frame_id, "regions_xywh": regions[frame_id]}, separators=(",", ":")))
+            handle.write("\n")
+
+
 def convert_uavdt(
     source_root: str | Path,
     output_root: str | Path,
@@ -183,6 +221,7 @@ def convert_uavdt(
             class_names=list(CLASS_NAMES),
         )
         write_sequence(sequence_dir, info, records)
+        _write_ignore_regions(sequence_dir, _read_uavdt_ignore_regions(annotation_path, sequence_name))
         output_dirs.append(sequence_dir)
 
     return output_dirs

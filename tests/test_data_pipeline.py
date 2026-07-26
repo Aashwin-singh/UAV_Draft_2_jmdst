@@ -63,6 +63,9 @@ def _make_uavdt_source(root: Path) -> Path:
         lines.append(f"{frame},1,{car[0]},{car[1]},{car[2]},{car[3]},0,0,1\n")
         lines.append(f"{frame},2,{truck[0]},{truck[1]},{truck[2]},{truck[3]},0,0,2\n")
     (gt_dir / f"{sequence}_gt_whole.txt").write_text("".join(lines), encoding="utf-8")
+    # UAVDT ignore-region file: per-frame don't-care rectangles.
+    ignore_lines = [f"{frame},1,300,10,50,50,1,-1,-1\n" for frame in range(1, 3)]
+    (gt_dir / f"{sequence}_gt_ignore.txt").write_text("".join(ignore_lines), encoding="utf-8")
     return source
 
 
@@ -139,6 +142,14 @@ class ConverterAndDatasetTests(unittest.TestCase):
             _, records = read_sequence(converted_car_only[0])
             self.assertEqual(len(records[0].objects), 1)
             self.assertEqual(records[0].objects[0].class_name, "car")
+
+            # UAVDT ignore regions are extracted alongside the annotations.
+            ignore_path = converted_car_only[0] / "ignore_regions.jsonl"
+            self.assertTrue(ignore_path.is_file())
+            import json
+
+            first = json.loads(ignore_path.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(first["regions_xywh"], [[300.0, 10.0, 50.0, 50.0]])
 
             output_all = root / "unified_all"
             converted_all = convert_uavdt(source, output_all, split="train", car_only=False)
