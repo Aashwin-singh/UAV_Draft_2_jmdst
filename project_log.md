@@ -116,10 +116,37 @@ are we" snapshot, updated as phases complete.
   cascade/IoU matching, missed-detection expansion, and output filtering are
   Phase 8 (modified DeepSORT), not yet started.
 
-**Not yet started**: MSFP/Mamba (Phase 6, see above), modified DeepSORT
-(Phase 8 — cascade matching + IoU assignment using Phase 7's Track class and
-Phase 3-5's FELNet embeddings), full pipeline integration (Phase 9),
-evaluation (Phase 10), ablations (Phase 11).
+- **Phase 8 done**: modified-DeepSORT association in `jmdst/tracking/`.
+  `matching.py` (IoU/cosine cost matrices, Mahalanobis gating, Hungarian
+  min-cost matching, DeepSORT age cascade) + `tracker.py` (the `Tracker`:
+  detection-frame association per A.6 steps 1-7, plus `expansion_targets` and
+  `filter_tracking_outputs` for the tracking-branch rules). 25 new tests (67
+  total). End-to-end check on a real UAVDT sequence (GT boxes + real FELNet
+  embeddings, per-frame detection): 14/14 GT tracks kept a single stable ID,
+  0 ID switches over 200 frames.
+  - **max_cosine_distance** defaults to 0.5 (paper doesn't specify it),
+    calibrated to FELNet's Phase-4 embedding distribution (same-id cosine
+    distance ~0.24, diff-id ~0.89). Tune in Phase 10 if needed.
+  - **Known behavior, faithful to paper**: appearance matching is
+    Mahalanobis-gated, so it disambiguates nearby targets but does NOT rescue
+    large position jumps (a 60px jump for a 20px box is gated out). This is
+    the paper's own documented failure mode (Sec. 3.5.4). If Phase 9/10 shows
+    too many ID switches from UAV/camera motion, loosening the gate or the
+    Kalman `std_weight_position` is the first knob.
+  - **Phase 9 wiring insight** (important): a tracklet confirms only after N=4
+    *consecutive frames present*, counting BOTH detection-frame updates AND
+    tracking-branch updates. So the Phase 9 tracking branch MUST call
+    `track.update(kf, localized_box, embedding)` on every non-detection frame
+    for the targets it localizes — otherwise tentative tracks get
+    `mark_missed()` and are deleted before they can ever confirm (verified
+    this failure mode directly). The detection branch calls `tracker.update`;
+    the tracking branch calls `track.update` per tracked target, then the
+    survivors/filtered outputs update trajectories.
+
+**Not yet started**: MSFP/Mamba (Phase 6, see above), full pipeline
+integration (Phase 9 — wire YOLO -> SSI crop -> FELNet -> modified DeepSORT
+into Algorithm 1's dual-branch routine), evaluation (Phase 10), ablations
+(Phase 11).
 
 ## What a teammate can work on right now, in parallel
 
@@ -134,10 +161,12 @@ If anyone wants to tackle the mamba-ssm build (see the writeup above)
 instead, that's also independent of everything else — just don't run a long
 GPU training job at the same time as someone else on the same machine.
 
-Phase 8 (modified DeepSORT) is a natural next session's work — it directly
-consumes Phase 7's `Track`/`KalmanFilter` and Phase 3-5's FELNet embeddings,
-so check `git log` before starting it to avoid duplicate work if picked up
-in parallel.
+Phase 9 (full integration) is the natural next step — it wires YOLO ->
+SSI crop -> FELNet -> the Phase 8 `Tracker` into Algorithm 1's dual-branch
+routine. See the "Phase 9 wiring insight" note under Phase 8 above for the
+one non-obvious requirement (the tracking branch must call `track.update`
+per target so tracklets can confirm). Check `git log` before starting it to
+avoid duplicate work if picked up in parallel.
 
 ## Setting up a fresh clone (if a teammate is on a different machine)
 
