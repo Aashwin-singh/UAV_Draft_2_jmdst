@@ -5,6 +5,35 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## Accuracy-improvement work (2026-07-26, post-Phase-10)
+
+Focused on raising results before the Phase 11 ablations. Findings, in order:
+
+1. **MSFP is NOT the bottleneck** (answered "how much does MSFP matter"):
+   paper Table 2 shows MSFP adds only +0.4 MOTA / +0.6 IDF1 / -7% IDs. Our
+   gap to the paper is ~50 MOTA points, so unblocking mamba-ssm for MSFP is
+   not worth it now. FELNet's feature encoding (already implemented) is the
+   bigger association win (IDs 541->361 vs standard ReID in the same table).
+2. **UAVDT ignore regions — DONE, biggest feasible eval win**: UAVDT val
+   MOTA 3.0 -> 17.0 (IDF1 43.6->46.6, HOTA 34.7->36.6). This is the correct
+   UAVDT protocol, not a hack. M0401 alone went 9.8 -> 34.9. Committed.
+3. **Residual gap is the DETECTOR, not tracker/MSFP**: diagnosed M1101 (our
+   worst val seq) — 44% of the detector's raw detections there are true FP
+   (hallucinated/unlabeled cars outside ignore regions). Root cause is the
+   Phase-2 YOLO overfitting (val mAP peaked ~epoch 2) on out-of-distribution
+   scenes. Matches paper Sec 3.4.4 (detector choice = ~8.6% MOTA).
+   - Note M0203 val already gets MOTA 61.3 — the full system tracks well when
+     the detector is reliable. The average is dragged by M1101/M0401.
+4. **Detection-conf sensitivity** (quick tuning check, UAVDT val, with ignore
+   regions): conf 0.55->0.65 gives MOTA 17->21 (trades FP for FN) but flat/
+   slightly-worse IDF1/HOTA; 0.75 is worse overall. Kept the paper's 0.55 as
+   the faithful default (didn't change it) — 0.65 is a documented
+   detector-compensating option to validate on TEST if pursued, not a fix.
+
+**Highest-value next step = a better-generalizing detector** (retrain YOLO).
+Everything else (tracker tuning, MSFP) is small by comparison. See git log
+`bceba3b` for the ignore-region commit and full diagnostics.
+
 ## Status as of 2026-07-25
 
 **Done and committed** (see `git log` for details):
