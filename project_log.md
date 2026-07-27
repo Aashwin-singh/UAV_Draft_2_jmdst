@@ -56,22 +56,51 @@ Focused on raising results before the Phase 11 ablations. Findings, in order:
    - Honest read: real but **modest** gains. M1101 is still strongly negative
      (-34.9, 8162 FP) and dominates the average.
 
-7. **Next hypothesis (untested, concrete): train a PER-DATASET detector.**
-   We currently train ONE detector on a combined set that is **67% VisDrone /
-   33% UAVDT** — and the domains differ sharply (VisDrone: 4 classes, up to
-   2720x1530; UAVDT: car-only, 1024x540). VisDrone dominates, so the detector
-   likely underfits UAVDT's domain, which matches UAVDT being our weak spot.
-   The paper reports per-dataset results, implying per-dataset detectors.
-   A UAVDT-only YOLO dataset is already exported and verified at
-   `data/yolo_uavdt/` (8472 train images). To try it:
-   `python scripts/train_yolo.py --data data/yolo_uavdt/dataset.yaml --model yolo11n.pt --epochs 150 --patience 20 --strong-aug --name uavdt_only`
-   (~1/3 the data of the combined run, so notably faster). Then re-run
-   run_jmdst/evaluate against it and sweep conf again.
+7. **Per-dataset (UAVDT-only) detector — DONE. Best MOTA, and more faithful.**
+   Trained on `data/yolo_uavdt/` (8472 imgs, early-stopped at 27 epochs, best
+   epoch 7).
+   - **My domain-mixing hypothesis was WRONG on detector quality**: evaluated
+     apples-to-apples on UAVDT val, the *combined* detector is actually
+     better (mAP50 **0.697** vs UAVDT-only's **0.673**) — the extra VisDrone
+     data helps, cross-domain diversity is a net positive. But the UAVDT-only
+     model has higher **recall** (0.658 vs 0.623), and recall/FN was our weak
+     spot, so it still won on tracking. Good reminder: **detector mAP does
+     not reliably predict tracking metrics** — always evaluate end-to-end.
 
-**Where the gap stands**: the tracker and association are validated and
-working (M0203 val MOTA ~59-61, IDF1 59.3 at the best config). The remaining
-gap to the paper is dominated by detector quality on UAVDT's hard/OOD
-sequences, not by MSFP (~1%) or tracker logic.
+   Full UAVDT val comparison (all with ignore regions applied):
+
+   | Detector / conf | MOTA | IDF1 | HOTA | AssA | IDs | FP | FN | M1101 MOTA |
+   |---|---:|---:|---:|---:|---:|---:|---:|---:|
+   | original @ 0.55 (first baseline) | 17.0 | 46.6 | 36.6 | 38.4 | 203 | 10229 | 8585 | -38.0 |
+   | retrain_aug @ 0.45 | 18.6 | **50.2** | **38.1** | **42.3** | 219 | 9526 | 8915 | -34.9 |
+   | **uavdt_only @ 0.55** | **21.2** | 47.4 | 36.1 | 38.9 | **140** | 8196 | 9723 | **-18.0** |
+
+   **Two defensible best configs, genuine trade-off:**
+   - `uavdt_only` @ conf **0.55** — best MOTA (21.2), fewest ID switches
+     (140, down from 203), and much the best on our problem sequence M1101
+     (-18.0 vs -38.0 baseline). **Also the most faithful option**: it matches
+     the paper's per-dataset training protocol AND keeps the paper's stated
+     conf=0.55 with no threshold deviation.
+   - `retrain_aug` @ conf **0.45** — best IDF1 (50.2), HOTA (38.1), AssA
+     (42.3), i.e. better identity/association quality, but requires deviating
+     from the paper's conf and uses a domain-mixed detector.
+
+   **Recommended primary = `uavdt_only` @ 0.55** on faithfulness grounds
+   (per-dataset protocol + unmodified paper hyperparameters), with the
+   retrain_aug/0.45 numbers reported as an association-focused alternative.
+
+8. **Logical follow-up (not done)**: train a **VisDrone-only** detector for
+   symmetry, so both datasets use the paper's per-dataset protocol:
+   `python scripts/export_yolo_dataset.py --unified-root data/unified --output-root data/yolo_visdrone --datasets visdrone --splits train val test`
+   then `python scripts/train_yolo.py --data data/yolo_visdrone/dataset.yaml --model yolo11n.pt --epochs 150 --patience 20 --strong-aug --name visdrone_only`.
+   We have never evaluated tracking on VisDrone val at all yet — that's a gap
+   worth closing before Phase 11.
+
+**Where the gap stands**: tracker/association are validated and working
+(M0203 val MOTA ~51-61, IDF1 up to 59.3). Detector work has now delivered
+MOTA 17.0 -> 21.2 and M1101 -38.0 -> -18.0, but returns are diminishing and
+M1101 is still negative. Remaining gap is dominated by detector quality on
+UAVDT's hard sequences — not MSFP (~1%) and not tracker logic.
 
 ## Status as of 2026-07-25
 
