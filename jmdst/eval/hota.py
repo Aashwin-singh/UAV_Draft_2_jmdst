@@ -43,20 +43,40 @@ class HotaResult:
     per_alpha_hota: dict[float, float]
 
 
-def _global_frames(sequences: dict[str, FrameDict]) -> dict[int, list[tuple[str, np.ndarray]]]:
-    """Merge sequences into one frame pool with globally-unique string IDs."""
+def _global_frames_pair(
+    ground_truth: dict[str, FrameDict],
+    predictions: dict[str, FrameDict],
+) -> tuple[dict[int, list[tuple[str, np.ndarray]]], dict[int, list[tuple[str, np.ndarray]]]]:
+    """Merge GT and predictions into two aligned global frame pools.
 
-    merged: dict[int, list[tuple[str, np.ndarray]]] = defaultdict(list)
-    # Offset frame ids per sequence so frames from different sequences never mix.
-    frame_offset = 0
-    for seq_name in sorted(sequences):
-        frames = sequences[seq_name]
-        max_frame = max(frames) if frames else 0
-        for frame_id, objs in frames.items():
+    Frame ids are offset per sequence so frames from different sequences never
+    mix, and identities are prefixed by sequence name so they stay unique.
+
+    The offset MUST be derived from the union of GT and prediction frames for
+    each sequence and applied to both: deriving it independently desynchronizes
+    the two streams whenever a sequence's frame range differs between them
+    (e.g. a sequence with GT frames but an empty prediction file, which happens
+    for VisDrone sequences that contain no vehicles at all).
+    """
+
+    gt_merged: dict[int, list[tuple[str, np.ndarray]]] = defaultdict(list)
+    pred_merged: dict[int, list[tuple[str, np.ndarray]]] = defaultdict(list)
+
+    offset = 0
+    for seq_name in sorted(set(ground_truth) | set(predictions)):
+        gt_frames = ground_truth.get(seq_name, {})
+        pred_frames = predictions.get(seq_name, {})
+        max_frame = max([*gt_frames.keys(), *pred_frames.keys()], default=0)
+
+        for frame_id, objs in gt_frames.items():
             for track_id, box in objs:
-                merged[frame_offset + frame_id].append((f"{seq_name}:{track_id}", box))
-        frame_offset += max_frame + 1
-    return merged
+                gt_merged[offset + frame_id].append((f"{seq_name}:{track_id}", box))
+        for frame_id, objs in pred_frames.items():
+            for track_id, box in objs:
+                pred_merged[offset + frame_id].append((f"{seq_name}:{track_id}", box))
+
+        offset += max_frame + 1
+    return gt_merged, pred_merged
 
 
 def _match_frame(gt_boxes: np.ndarray, pred_boxes: np.ndarray, alpha: float) -> list[tuple[int, int]]:
@@ -78,8 +98,7 @@ def compute_hota(
 ) -> HotaResult:
     """Compute integrated HOTA/DetA/AssA over the given sequences."""
 
-    gt_global = _global_frames(ground_truth)
-    pred_global = _global_frames(predictions)
+    gt_global, pred_global = _global_frames_pair(ground_truth, predictions)
     all_frames = sorted(set(gt_global) | set(pred_global))
 
     per_alpha_hota: dict[float, float] = {}

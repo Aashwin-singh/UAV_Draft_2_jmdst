@@ -73,7 +73,10 @@ def evaluate_clearmot(
         accs.append(_accumulate(ground_truth[name], predictions.get(name, {}), iou_threshold))
         names.append(name)
 
-    metrics = ["mota", "motp", "idf1", "num_switches", "num_false_positives", "num_misses", "num_objects"]
+    metrics = [
+        "mota", "motp", "idf1", "num_switches",
+        "num_false_positives", "num_misses", "num_objects", "num_matches",
+    ]
     mh = mm.metrics.create()
     summary = mh.compute_many(accs, names=names, metrics=metrics, generate_overall=True)
 
@@ -89,4 +92,23 @@ def evaluate_clearmot(
             false_negatives=int(row["num_misses"]),
             num_objects=int(row["num_objects"]),
         )
+
+    # Sequences with no objects and no predictions yield motp = NaN (undefined),
+    # and that NaN propagates into motmetrics' OVERALL motp even though MOTA and
+    # IDF1 aggregate fine. Recompute OVERALL motp as a match-weighted mean over
+    # the sequences that actually have matches. (motp is a mean distance per
+    # match, so motp * num_matches recovers each sequence's total distance.)
+    if "OVERALL" in results and not np.isfinite(results["OVERALL"].motp):
+        total_distance = 0.0
+        total_matches = 0
+        for name, row in summary.iterrows():
+            if name == "OVERALL":
+                continue
+            matches = float(row["num_matches"])
+            distance = float(row["motp"])
+            if matches > 0 and np.isfinite(distance):
+                total_distance += distance * matches
+                total_matches += int(matches)
+        if total_matches > 0:
+            results["OVERALL"].motp = float(1.0 - total_distance / total_matches)
     return results

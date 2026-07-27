@@ -38,6 +38,22 @@ class ClearMotTests(unittest.TestCase):
         self.assertEqual(overall.false_negatives, 3)
         self.assertAlmostEqual(overall.mota, 1 - 3 / 5)
 
+    def test_overall_motp_survives_object_free_sequence(self) -> None:
+        # Regression: an object-free sequence yields motp = NaN (undefined),
+        # which previously propagated into the OVERALL motp. OVERALL must still
+        # report the real localization quality of the sequences that have data.
+        gt = {
+            "empty": {f: [] for f in range(1, 20)},
+            "real": {f: [(1, _box(10, 10))] for f in range(1, 6)},
+        }
+        pred = {
+            "empty": {},
+            "real": {f: [(1, _box(10, 10))] for f in range(1, 6)},
+        }
+        overall = evaluate_clearmot(gt, pred)["OVERALL"]
+        self.assertTrue(np.isfinite(overall.motp))
+        self.assertAlmostEqual(overall.motp, 1.0, places=6)  # boxes match exactly
+
     def test_id_switch_counted(self) -> None:
         # Same GT track, but the prediction's id flips halfway -> 1 ID switch.
         gt = {"seq": {f: [(1, _box(10, 10))] for f in range(1, 5)}}
@@ -89,6 +105,41 @@ class HotaTests(unittest.TestCase):
         self.assertAlmostEqual(result.assa, 0.5, places=6)
         self.assertLess(result.hota, 1.0)
         self.assertGreater(result.hota, 0.5)  # sqrt(1.0 * 0.5) ~ 0.707
+
+    def test_object_free_sequence_does_not_desync_other_sequences(self) -> None:
+        # Regression: a sequence with GT frames but NO objects (so its
+        # prediction file is empty) previously advanced the GT frame offset
+        # without advancing the prediction offset, desynchronizing every later
+        # sequence and collapsing HOTA to ~0. Real case: VisDrone val has two
+        # pedestrian-only sequences.
+        gt = {
+            "aaa_empty": {f: [] for f in range(1, 300)},  # frames, but no objects
+            "bbb_real": {f: [(1, _box(10, 10))] for f in range(1, 6)},
+        }
+        pred = {
+            "aaa_empty": {},  # empty prediction file
+            "bbb_real": {f: [(1, _box(10, 10))] for f in range(1, 6)},
+        }
+        result = compute_hota(gt, pred)
+        # bbb_real is tracked perfectly, so HOTA must be 1.0 despite the
+        # object-free sequence sorting before it.
+        self.assertAlmostEqual(result.hota, 1.0, places=6)
+        self.assertAlmostEqual(result.deta, 1.0, places=6)
+
+    def test_sequence_missing_from_predictions_entirely(self) -> None:
+        # A GT sequence with no prediction file at all must not desync others.
+        gt = {
+            "aaa_missing": {f: [(1, _box(50, 50))] for f in range(1, 100)},
+            "bbb_real": {f: [(1, _box(10, 10))] for f in range(1, 6)},
+        }
+        pred = {"bbb_real": {f: [(1, _box(10, 10))] for f in range(1, 6)}}
+        result = compute_hota(gt, pred)
+        # bbb_real perfect; aaa_missing all FN -> DetA = 5/(5+99) but the
+        # bbb matches must still be found (not zero).
+        self.assertGreater(result.deta, 0.0)
+        self.assertGreater(result.assa, 0.0)
+        # Association for the one tracked target is perfect.
+        self.assertAlmostEqual(result.assa, 1.0, places=6)
 
     def test_localization_threshold_matters(self) -> None:
         # Prediction offset so IoU is moderate; at high alpha it stops matching.
