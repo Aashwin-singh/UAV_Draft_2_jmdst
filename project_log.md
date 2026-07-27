@@ -30,9 +30,48 @@ Focused on raising results before the Phase 11 ablations. Findings, in order:
    the faithful default (didn't change it) — 0.65 is a documented
    detector-compensating option to validate on TEST if pursued, not a fix.
 
-**Highest-value next step = a better-generalizing detector** (retrain YOLO).
-Everything else (tracker tuning, MSFP) is small by comparison. See git log
-`bceba3b` for the ignore-region commit and full diagnostics.
+5. **Detector retrain with `--strong-aug` + early stopping — DONE, helped**:
+   `outputs/yolo_runs/retrain_aug/` (28 epochs, early-stopped). The
+   overfitting peak moved epoch 2 -> **epoch 8**, and detector quality rose:
+   mAP50 0.451 -> **0.498**, mAP50-95 0.268 -> **0.298**. Augmentation
+   genuinely delayed overfitting.
+6. **But the retrained detector needs a LOWER conf threshold** (it's less
+   confident after heavy augmentation — output count dropped ~20% at the same
+   threshold, trading FP for FN). UAVDT val, ignore regions applied:
+
+   | Detector / conf | MOTA | IDF1 | HOTA | AssA | IDs | FP | FN |
+   |---|---:|---:|---:|---:|---:|---:|---:|
+   | original @ 0.55 (prev. baseline) | 17.0 | 46.6 | 36.6 | 38.4 | 203 | 10229 | 8585 |
+   | retrain_aug @ 0.55 | 19.0 | 43.8 | 34.9 | 36.8 | 171 | 8511 | 9884 |
+   | **retrain_aug @ 0.45 (best)** | 18.6 | **50.2** | **38.1** | **42.3** | 219 | 9526 | 8915 |
+   | retrain_aug @ 0.40 | 18.2 | 49.1 | 37.5 | 40.8 | 165 | 9870 | 8706 |
+
+   **Best config = retrain_aug @ conf 0.45**: vs the previous baseline that's
+   +1.6 MOTA, +3.6 IDF1, +1.5 HOTA, +3.9 AssA. Per-sequence: M0203 58.9,
+   M0401 37.4 (up from 34.9), M1101 -34.9 (up from -38.0).
+   - Note conf 0.45 deviates from the paper's 0.55, which was tuned for the
+     paper's own detector; ours is trained differently so its operating point
+     differs. Threshold was chosen on VAL — keep TEST held out and report
+     final numbers there with this val-chosen config.
+   - Honest read: real but **modest** gains. M1101 is still strongly negative
+     (-34.9, 8162 FP) and dominates the average.
+
+7. **Next hypothesis (untested, concrete): train a PER-DATASET detector.**
+   We currently train ONE detector on a combined set that is **67% VisDrone /
+   33% UAVDT** — and the domains differ sharply (VisDrone: 4 classes, up to
+   2720x1530; UAVDT: car-only, 1024x540). VisDrone dominates, so the detector
+   likely underfits UAVDT's domain, which matches UAVDT being our weak spot.
+   The paper reports per-dataset results, implying per-dataset detectors.
+   A UAVDT-only YOLO dataset is already exported and verified at
+   `data/yolo_uavdt/` (8472 train images). To try it:
+   `python scripts/train_yolo.py --data data/yolo_uavdt/dataset.yaml --model yolo11n.pt --epochs 150 --patience 20 --strong-aug --name uavdt_only`
+   (~1/3 the data of the combined run, so notably faster). Then re-run
+   run_jmdst/evaluate against it and sweep conf again.
+
+**Where the gap stands**: the tracker and association are validated and
+working (M0203 val MOTA ~59-61, IDF1 59.3 at the best config). The remaining
+gap to the paper is dominated by detector quality on UAVDT's hard/OOD
+sequences, not by MSFP (~1%) or tracker logic.
 
 ## Status as of 2026-07-25
 
