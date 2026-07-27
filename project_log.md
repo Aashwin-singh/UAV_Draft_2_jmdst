@@ -89,18 +89,68 @@ Focused on raising results before the Phase 11 ablations. Findings, in order:
    (per-dataset protocol + unmodified paper hyperparameters), with the
    retrain_aug/0.45 numbers reported as an association-focused alternative.
 
-8. **Logical follow-up (not done)**: train a **VisDrone-only** detector for
-   symmetry, so both datasets use the paper's per-dataset protocol:
-   `python scripts/export_yolo_dataset.py --unified-root data/unified --output-root data/yolo_visdrone --datasets visdrone --splits train val test`
-   then `python scripts/train_yolo.py --data data/yolo_visdrone/dataset.yaml --model yolo11n.pt --epochs 150 --patience 20 --strong-aug --name visdrone_only`.
-   We have never evaluated tracking on VisDrone val at all yet — that's a gap
-   worth closing before Phase 11.
+8. **VisDrone-only detector + first VisDrone tracking evaluation — DONE.**
+   Detector trained (`outputs/yolo_runs/visdrone_only/`, 47 epochs, best at
+   epoch 27 — much later than UAVDT's epoch 7, consistent with 2x the data and
+   a harder 4-class task).
+   - Fair detector comparison **on VisDrone val**: essentially a tie, with the
+     combined detector marginally ahead — mAP50 **0.517 (combined)** vs
+     **0.507 (visdrone_only)**, identical mAP50-95 (0.312), and combined has
+     better recall (0.503 vs 0.473). Per-class shows the expected imbalance
+     effect (car 0.83-0.84, bus 0.36-0.41): VisDrone train is 83.9% car /
+     9.8% van / 4.6% truck / **1.6% bus** (52:1 car:bus).
+   - So **per-dataset training helped UAVDT but NOT VisDrone.** Combined
+     training is fine (arguably better) for VisDrone.
+
+   **First-ever VisDrone val tracking results** (conf 0.55, tau=3):
+
+   | Detector | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FPS |
+   |---|---:|---:|---:|---:|---:|---:|---:|---:|
+   | **retrain_aug (combined)** | **38.8** | 77.4 | 46.2 | 38.0 | **39.1** | 37.4 | **1141** | 21.7 |
+   | visdrone_only | 36.0 | 77.5 | **46.5** | **38.5** | 37.7 | **40.0** | 1193 | 22.6 |
+
+   Roughly a wash; combined is ahead on MOTA/DetA/IDs, visdrone_only slightly
+   ahead on HOTA/AssA/IDF1. **Recommend the combined `retrain_aug` detector
+   for VisDrone** (better MOTA, fewer ID switches, and no extra model to
+   maintain).
+   - Notable: **VisDrone tracking (MOTA 38.8, HOTA 38.0) is BETTER than our
+     UAVDT results (MOTA 21.2, HOTA 36.1)** — the opposite of the initial
+     expectation, because UAVDT's M1101 is pathological for our detector.
+   - FPS 21.7 on VisDrone (paper reports 18.6), so speed is in the paper's
+     range. Accuracy can't be compared to the paper's VisDrone table directly
+     — that table is an image in the PDF and its values were never extracted.
+
+9. **TWO EVAL BUGS FOUND AND FIXED** while doing the VisDrone run (commit
+   `d093c2c`) — both triggered by VisDrone val's two pedestrian-only
+   sequences (GT frames but zero vehicle objects -> empty prediction files):
+   - **HOTA desync (severe)**: per-sequence frame offsets were computed
+     independently for GT vs predictions, so a sequence whose frame range
+     differed between them desynchronized everything after it. HOTA read
+     **1.5** when the true value was **38.5**. Fixed via a shared offset.
+   - **OVERALL MOTP = NaN**: undefined per-sequence motp propagated into the
+     overall aggregate. Now recomputed as a match-weighted mean.
+   - **Previously reported UAVDT numbers were re-verified and are UNCHANGED**
+     (all 3 UAVDT val sequences have objects, so the desync never triggered).
+   - 3 regression tests added. Lesson: metrics code needs its own edge-case
+     tests — this only appeared on a dataset with degenerate sequences, and
+     MOTA looked plausible the whole time while HOTA was silently broken.
+
+**Current best configs (both val splits, tau=3):**
+
+| Dataset | Detector | conf | MOTA | MOTP | IDF1 | HOTA | FPS |
+|---|---|---:|---:|---:|---:|---:|---:|
+| UAVDT | `uavdt_only` | 0.55 | 21.2 | 77.6* | 47.4 | 36.1 | ~50 |
+| VisDrone | `retrain_aug` (combined) | 0.55 | 38.8 | 77.4 | 46.2 | 38.0 | 21.7 |
+
+\* per-sequence MOTP; see the UAVDT table above for the full breakdown.
+Both use the paper's unmodified conf=0.55 and tau=3.
 
 **Where the gap stands**: tracker/association are validated and working
-(M0203 val MOTA ~51-61, IDF1 up to 59.3). Detector work has now delivered
-MOTA 17.0 -> 21.2 and M1101 -38.0 -> -18.0, but returns are diminishing and
-M1101 is still negative. Remaining gap is dominated by detector quality on
-UAVDT's hard sequences — not MSFP (~1%) and not tracker logic.
+across both datasets. Detector work delivered UAVDT MOTA 3.0 -> 17.0 -> 21.2;
+VisDrone came in at 38.8 first try. Returns on detector tuning are now
+clearly diminishing (UAVDT M1101 remains the outlier at -18.0). Remaining gap
+is dominated by detector quality on hard/OOD sequences — not MSFP (~1% per
+the paper's own ablation) and not tracker logic.
 
 ## Status as of 2026-07-25
 
