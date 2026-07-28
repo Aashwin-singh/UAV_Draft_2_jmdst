@@ -5,6 +5,112 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## STATUS: all 11 phases implemented (10 complete, Phase 6 blocked)
+
+Phases 1-5 and 7-11 are done, verified, and committed. **Phase 6 (MSFP) is
+the only one not implemented** — blocked on `mamba-ssm`, whose PyPI sdist
+ships without its CUDA sources (full diagnosis further down). The paper's own
+ablation puts MSFP at ~1% of the metrics, so this is a small hole, and it is
+documented rather than hidden.
+
+**Headline results** (val splits, tau=3, paper's conf=0.55, ignore regions
+applied where available):
+
+| Dataset | Detector | MOTA | MOTP | IDF1 | HOTA | FPS |
+|---|---|---:|---:|---:|---:|---:|
+| UAVDT | `uavdt_only` | 22.6 | 76.8 | 50.3 | 38.0 | 51.7 |
+| VisDrone | `retrain_aug` (combined) | 39.9 | 77.4 | 48.7 | 40.1 | ~21 |
+
+FPS exceeds the paper's (26.6 UAVDT / 18.6 VisDrone); accuracy is well below
+it, dominated by detector quality on hard sequences (see the improvement-work
+section). Test splits are deliberately still held out — every number here is
+val, and thresholds were tuned on val only.
+
+## Phase 11 — Ablation study (2026-07-27)
+
+Mirrors paper Sec. 3.4. Run with `scripts/run_ablations.py` (tau sweep +
+appearance ablation, emits markdown/JSON). Note the paper runs its ablations
+on MDMT, which we don't have; ours are on UAVDT val (and VisDrone val for the
+appearance ablation).
+
+### A. Detection interval tau (paper Sec. 3.4.3 / Table 3)
+
+UAVDT val, `uavdt_only` detector, conf 0.55, mcd 0.3, ignore regions applied.
+tau=1 (detect every frame) is a reference baseline the paper's table omits.
+
+| tau | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | **34.9** | 78.2 | 48.4 | 38.1 | 37.1 | 39.2 | 362 | 4795 | 9755 | 35.6 |
+| 2 | 27.9 | 77.4 | **51.2** | **39.3** | 35.7 | **43.3** | 153 | 6916 | 9469 | 48.2 |
+| 3 | 22.6 | 76.8 | 50.3 | 38.0 | 33.9 | 42.9 | 125 | 7886 | 9725 | 51.7 |
+| 4 | 19.2 | 76.7 | 48.9 | 37.0 | 32.8 | 42.0 | **96** | 8304 | 10128 | 54.9 |
+| 5 | 14.9 | 76.0 | 44.5 | 34.4 | 31.3 | 37.9 | 126 | 8959 | 10429 | 55.9 |
+| 6 | 11.0 | 75.9 | 43.4 | 33.7 | 29.5 | 38.6 | 120 | 9189 | 11100 | **57.2** |
+
+**Reproduced 3 of the paper's 4 trends** (checked programmatically over
+tau=2..6): MOTA decreases monotonically ✓, FPS increases monotonically ✓,
+FN increases ✓. **Diverged on FP**: the paper's FP *decreases* with tau
+(14416 -> 11747), ours *increases* (6916 -> 9189).
+- Likely cause of the FP divergence: in the paper, larger tau raises the
+  N=tau+1 confirmation bar, filtering more false detections. In ours the
+  *tracking branch* appears to generate FPs — our FELNet localization is
+  weaker (Phase 4: val IoU ~0.65), so longer runs of consecutive tracking
+  frames drift more, and drifted tracks persist as FP.
+- **Our optimum tau is lower than the paper's**: the paper picks tau=3 as the
+  best trade-off; ours peaks at tau=2 for HOTA/IDF1/AssA and tau=1 for MOTA.
+  Consistent with a weaker tracking branch — we benefit more from frequent
+  detection than the paper's implementation does.
+- Absolute MOTA is far below the paper's (27.9 vs 69.0 at tau=2), but that is
+  a different dataset (UAVDT vs MDMT) *and* our known detector gap; the
+  trends are what this ablation validates.
+- Our FPS is much higher (48 vs 16 at tau=2) — YOLOv11n on an RTX 4070 vs the
+  paper's RTX 3070, and we time inference only.
+
+### B. FELNet feature encoding (paper Sec. 3.4.2) — NEGATIVE RESULT
+
+Appearance cascade ON vs OFF (IoU-only), tau=3, mcd=0.3. **Deviation**: the
+paper compares FELNet against DeepSORT's ReIDNet; we have no ReIDNet weights,
+so OFF means *no appearance model at all*.
+
+| Dataset | Association | MOTA | IDF1 | HOTA | AssA | IDs |
+|---|---|---:|---:|---:|---:|---:|
+| UAVDT val | FELNet embeddings | **22.6** | 50.3 | 38.0 | 42.9 | 125 |
+| UAVDT val | IoU only | 20.4 | **54.2** | **41.1** | **50.9** | **54** |
+| VisDrone val | FELNet embeddings | 39.9 | 48.7 | 40.1 | 41.5 | 1126 |
+| VisDrone val | IoU only | **40.5** | **51.8** | **42.0** | **45.9** | **656** |
+
+**Our FELNet embeddings HURT association** — the opposite of the paper
+(which reports FELNet cutting IDs 541 -> 335 vs ReIDNet). Turning appearance
+off cuts ID switches by 57% on UAVDT (125 -> 54) and 42% on VisDrone
+(1126 -> 656), and raises HOTA ~2-3 points on both. Only MOTA on UAVDT
+slightly prefers appearance ON.
+- Tested and ruled out two explanations: (a) threshold tuning — swept
+  max_cosine_distance {0.2, 0.3, 0.5}; 0.3 is best and was adopted as the new
+  default, but IoU-only still wins; (b) "UAVDT is car-only so all targets look
+  alike" — the same pattern holds on VisDrone's 4 varied classes.
+- **Most likely root cause, predicted back in Phase 4**: FELNet's training
+  loss is dominated numerically by the overlap term (L_o ~27 vs L_E ~0.9,
+  because overlap targets are in SSI pixel units 0-64 while the embedding loss
+  is a bounded correlation). With the paper's equal weights (1,1,1) the
+  embedding branch gets comparatively little gradient signal on the shared
+  backbone. This ablation is the confirmation of that Phase-4 warning.
+- **Concrete fix to try** (not run): retrain FELNet with a rebalanced loss —
+  e.g. normalize overlap targets to [0,1] or raise lambda1 — then re-run this
+  ablation. That is a documented deviation from the paper's stated weights,
+  but justified by this evidence.
+
+### C. Detector (paper Sec. 3.4.4)
+
+Covered by the improvement work above (original vs `retrain_aug` vs
+`uavdt_only`); the paper swaps YOLOv11 for YOLOX and reports ~8.6% MOTA
+swing, consistent with our finding that the detector is our dominant lever.
+
+### D. MSFP (paper Sec. 3.4.1) — NOT RUN
+
+Blocked on mamba-ssm (root cause diagnosed below). The paper reports MSFP as
+worth +0.4 MOTA / +0.6 IDF1 / +0.3 HOTA / IDs 361 -> 335, i.e. ~1%, which is
+why it was deprioritized relative to the detector.
+
 ## Accuracy-improvement work (2026-07-26, post-Phase-10)
 
 Focused on raising results before the Phase 11 ablations. Findings, in order:
