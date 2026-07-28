@@ -90,8 +90,14 @@ def main() -> None:
         length=args.num_steps * args.episodes_per_step,
         horizontal_flip=True,
         seed=args.seed,
+        # Targets must be in the same overlap space the checkpoint was trained in.
+        overlap_scale=model.config.overlap_scale,
     )
-    print(f"Evaluating on {len(dataset.sequences)} sequences (dataset={args.dataset or 'all'}, split={args.split}).")
+    print(
+        f"Evaluating on {len(dataset.sequences)} sequences "
+        f"(dataset={args.dataset or 'all'}, split={args.split}, "
+        f"overlap_scale={model.config.overlap_scale})."
+    )
 
     loader = DataLoader(
         dataset,
@@ -135,11 +141,14 @@ def main() -> None:
             total_confidence_calls += true_positive.numel()
 
             # Localization: decode the box at the *true* center anchor and
-            # compare IoU against the ground-truth box at that anchor.
+            # compare IoU against the ground-truth box at that anchor. Losses
+            # above stay in the model's native (possibly normalized) overlap
+            # space; box decoding needs SSI pixels, so scale both sides up.
+            scale = model.config.overlap_scale
             rows = torch.arange(batch["ssi"].shape[0], device=device)
             center_idx = batch["center_anchor_index"]
-            pred_overlap_center = outputs["overlap"][rows, center_idx]
-            gt_overlap_center = batch["overlaps"][rows, center_idx]
+            pred_overlap_center = outputs["overlap"][rows, center_idx] * scale
+            gt_overlap_center = batch["overlaps"][rows, center_idx] * scale
             anchor_per_sample = anchors[center_idx]
             pred_box = decode_boxes(pred_overlap_center, anchor_per_sample)
             gt_box = decode_boxes(gt_overlap_center, anchor_per_sample)

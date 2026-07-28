@@ -50,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--embedding-dim", type=int, default=16)
+    parser.add_argument(
+        "--overlap-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Divide overlap targets by this (and multiply model output back at "
+            "inference). 64 normalizes overlaps to ~[0,1] so the overlap RMSE "
+            "stops dominating the embedding loss under the paper's equal loss "
+            "weights. 1.0 = original pixel-space behaviour."
+        ),
+    )
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -75,6 +86,7 @@ def main() -> None:
         length=args.steps_per_epoch * args.episodes_per_step,
         horizontal_flip=True,
         seed=args.seed,
+        overlap_scale=args.overlap_scale,
     )
     print(f"Loaded {len(dataset.sequences)} sequences (dataset={args.dataset or 'all'}, split={args.split}).")
 
@@ -88,7 +100,9 @@ def main() -> None:
         drop_last=False,
     )
 
-    model = FELNet(FELNetConfig(embedding_dim=args.embedding_dim)).to(device)
+    model = FELNet(
+        FELNetConfig(embedding_dim=args.embedding_dim, overlap_scale=args.overlap_scale)
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     total_steps = args.epochs * args.steps_per_epoch
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)

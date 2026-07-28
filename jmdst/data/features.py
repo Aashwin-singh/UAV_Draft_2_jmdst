@@ -86,6 +86,8 @@ def extract_sequence_features(
         ref = torch.tensor(refs, dtype=torch.float32, device=device)
         with torch.no_grad():
             out = model(x)
+            # Anchor selection compares against pixel-space reference overlaps.
+            out["overlap"] = out["overlap"] * model.config.overlap_scale
             selected = select_anchor_output(
                 out["overlap"], out["confidence"], ref, anchors, confidence_threshold
             )

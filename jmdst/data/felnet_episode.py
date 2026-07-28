@@ -102,7 +102,13 @@ class FELNetEpisodeDataset(Dataset):
         crop_config: CropConfig | None = None,
         horizontal_flip: bool = True,
         seed: int | None = None,
+        overlap_scale: float = 1.0,
     ) -> None:
+        # Overlap targets are divided by overlap_scale, so overlap_scale=64
+        # yields ~[0,1] targets whose RMSE is comparable to the embedding and
+        # confidence losses (see FELNetConfig.overlap_scale). Must match the
+        # model's FELNetConfig.overlap_scale.
+        self.overlap_scale = float(overlap_scale)
         self.k_max = int(k_max)
         self.n_o = int(n_o)
         self.n_s = int(n_s)
@@ -194,6 +200,9 @@ class FELNetEpisodeDataset(Dataset):
         # Map track_ids to contiguous local identity ids 0..K-1.
         unique_ids = {tid: i for i, tid in enumerate(sorted(set(track_ids)))}
         identity = [unique_ids[tid] for tid in track_ids]
+
+        if self.overlap_scale != 1.0:
+            overlaps = [o / self.overlap_scale for o in overlaps]
 
         if TORCH_AVAILABLE:
             return {

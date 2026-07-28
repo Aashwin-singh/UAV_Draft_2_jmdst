@@ -96,6 +96,64 @@ class LossTests(unittest.TestCase):
         self.assertTrue(any(bool(g.abs().sum() > 0) for g in grads))
 
 
+class OverlapScaleTests(unittest.TestCase):
+    """overlap_scale must rescale targets and round-trip back to pixels."""
+
+    def _episode(self, unified, scale):
+        return FELNetEpisodeDataset(
+            unified, dataset="visdrone", split="train",
+            k_max=1, n_o=2, n_s=2, length=2, seed=0, overlap_scale=scale,
+        )[0]
+
+    def test_targets_scale_by_the_configured_factor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            convert_visdrone(_make_visdrone_source(root), root / "unified", split="train")
+            unified = root / "unified"
+
+            pixel = self._episode(unified, 1.0)
+            normalized = self._episode(unified, 64.0)
+
+            # Same sampling seed -> same targets up to the scale factor.
+            torch.testing.assert_close(normalized["overlaps"] * 64.0, pixel["overlaps"])
+            # Normalized targets land in a sane range for a 64px SSI.
+            self.assertLess(float(normalized["overlaps"].abs().max()), 4.0)
+            # Pixel targets are much larger -- the imbalance this fixes.
+            self.assertGreater(float(pixel["overlaps"].abs().max()), 10.0)
+
+    def test_scaling_rebalances_loss_magnitudes(self) -> None:
+        # The whole point: with pixel targets the overlap loss dwarfs the
+        # embedding loss; normalized, they are the same order of magnitude.
+        torch.manual_seed(0)
+        n = 8
+        pixel_targets = torch.rand(n, 4, 4) * 60
+        batch_common = {
+            "confidences": torch.randint(0, 2, (n, 4)).float(),
+            "center_anchor_index": torch.randint(0, 4, (n,)),
+            "identity": torch.tensor([0, 0, 1, 1, 2, 2, 3, 3]),
+        }
+        outputs = {
+            "overlap": torch.zeros(n, 4, 4),
+            "confidence": torch.rand(n, 4),
+            "embedding": torch.nn.functional.normalize(torch.randn(n, 4, 16), dim=-1),
+        }
+
+        pixel_losses = FELNetLoss()({**outputs}, {**batch_common, "overlaps": pixel_targets})
+        norm_losses = FELNetLoss()({**outputs}, {**batch_common, "overlaps": pixel_targets / 64.0})
+
+        # Pixel-space: overlap loss is an order of magnitude above embedding.
+        self.assertGreater(float(pixel_losses["overlap"]) / float(pixel_losses["embedding"]), 10.0)
+        # Normalized: same order of magnitude (within 10x).
+        self.assertLess(float(norm_losses["overlap"]) / float(norm_losses["embedding"]), 10.0)
+
+    def test_config_default_is_backward_compatible(self) -> None:
+        # Existing checkpoints were trained in pixel space; the default must
+        # stay 1.0 so they keep decoding correctly.
+        from jmdst.models import FELNetConfig
+
+        self.assertEqual(FELNetConfig().overlap_scale, 1.0)
+
+
 class EpisodeDatasetTests(unittest.TestCase):
     def test_episode_structure_and_collate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

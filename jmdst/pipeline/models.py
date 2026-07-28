@@ -87,6 +87,10 @@ class FELNetLocalizer:
         x = torch.stack(ssis, dim=0).to(self.device)
         with torch.no_grad():
             out = self.felnet(x)
+        # Convert the model's overlap output to SSI pixels so anchor selection
+        # and box decoding stay in one coordinate space (see
+        # FELNetConfig.overlap_scale; 1.0 for pixel-space checkpoints).
+        out["overlap"] = out["overlap"] * self.felnet.config.overlap_scale
 
         box_ssi = torch.tensor(
             [bbox_image_to_ssi(box, window) for box, window in zip(boxes_xywh, windows)],

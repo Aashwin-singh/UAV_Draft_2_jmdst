@@ -58,6 +58,14 @@ class FELNetConfig:
     in_channels: int = 3
     negative_slope: float = 0.1
     normalize_embedding: bool = True
+    # Scale factor converting the model's overlap output to SSI pixels.
+    # 1.0 = the model predicts raw pixel overlaps (0..64), which makes the
+    # RMSE overlap loss ~30x larger than the bounded embedding loss and
+    # starves the embedding branch under the paper's equal 1,1,1 weights.
+    # 64.0 = the model predicts overlaps normalized to ~[0,1] and inference
+    # multiplies back up, balancing the losses without changing the paper's
+    # loss weights. Default stays 1.0 so existing checkpoints load unchanged.
+    overlap_scale: float = 1.0
 
     @property
     def num_anchors(self) -> int:
