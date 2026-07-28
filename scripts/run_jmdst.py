@@ -48,7 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--conf", type=float, default=0.55)
     parser.add_argument("--iou", type=float, default=0.2)
     parser.add_argument("--imgsz", type=int, default=640)
-    parser.add_argument("--max-cosine-distance", type=float, default=0.5)
+    parser.add_argument("--max-cosine-distance", type=float, default=0.3)
+    parser.add_argument(
+        "--no-appearance",
+        action="store_true",
+        help="Ablation: disable FELNet-embedding cascade matching (IoU-only association).",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument("--max-frames", type=int, default=None, help="Cap frames per sequence (debugging).")
     return parser
@@ -78,7 +83,11 @@ def main() -> None:
             info, records = read_sequence(sequence_dir)
             image_size = (info.image_width, info.image_height)
             # Fresh pipeline per sequence (reuses the loaded models).
-            jmdst = JMDSTTracker(detector, localizer, tau=args.tau, max_cosine_distance=args.max_cosine_distance)
+            jmdst = JMDSTTracker(
+                detector, localizer, tau=args.tau,
+                max_cosine_distance=args.max_cosine_distance,
+                use_appearance=not args.no_appearance,
+            )
 
             lines: list[str] = []
             frames = records if args.max_frames is None else records[: args.max_frames]

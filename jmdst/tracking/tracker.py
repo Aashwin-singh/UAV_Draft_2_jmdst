@@ -135,15 +135,16 @@ class Tracker:
 
     Hyperparameter defaults follow A.8 (tau=3 -> confirm after N=tau+1=4,
     100-miss deletion, d=5, c1/i1/i2=0.9/0.1/0.1). ``max_cosine_distance`` is
-    not specified by the paper; the default is calibrated to FELNet's observed
-    embedding distribution (Phase 4 eval: same-identity cosine distance ~0.24,
-    different-identity ~0.89) and is expected to be tuned in Phase 10.
+    not specified by the paper; 0.3 was tuned on UAVDT val (0.3 beat both 0.5
+    and 0.2 on MOTA/IDF1/HOTA/IDs simultaneously) and is a strict improvement
+    over the initial 0.5 estimate taken from FELNet's Phase-4 embedding
+    distribution.
     """
 
     def __init__(
         self,
         tau: int = 3,
-        max_cosine_distance: float = 0.5,
+        max_cosine_distance: float = 0.3,
         max_iou_distance: float = 0.7,
         confirm_hits: int | None = None,
         max_age: int = DEFAULT_MAX_AGE,
@@ -152,7 +153,13 @@ class Tracker:
         i1: float = 0.1,
         i2: float = 0.1,
         kalman_filter: KalmanFilter | None = None,
+        use_appearance: bool = True,
     ) -> None:
+        # use_appearance=False disables the embedding-based cascade stage, so
+        # association is IoU-only (ablation for the paper's Sec. 3.4.2, which
+        # measures FELNet's feature-encoding contribution). FELNet is still
+        # used for tracking-branch localization -- only matching changes.
+        self.use_appearance = use_appearance
         self.tau = tau
         self.confirm_hits = confirm_hits if confirm_hits is not None else tau + 1
         self.max_age = max_age
@@ -208,7 +215,11 @@ class Tracker:
         detection_indices = list(range(len(detections)))
 
         # Stage 1: appearance cascade on confirmed tracks, spatially gated.
-        if confirmed and detection_indices:
+        # Skipped entirely in the IoU-only ablation, which drops every confirmed
+        # track into the stage-2 IoU pool instead.
+        if not self.use_appearance:
+            matches_a, unmatched_a, unmatched_dets = [], list(confirmed), detection_indices
+        elif confirmed and detection_indices:
             cost = appearance_cost_matrix(self.tracks, detections, confirmed, detection_indices)
             gate_cost_matrix(cost, self.kf, self.tracks, detections, confirmed, detection_indices)
             matches_a, unmatched_a, unmatched_dets = matching_cascade(

@@ -207,6 +207,49 @@ class TrackerAssociationTests(unittest.TestCase):
         self.assertEqual({t.track_id for t in tracker.tracks}, {1, 2})
 
 
+class AppearanceAblationTests(unittest.TestCase):
+    """use_appearance=False must fall back to IoU-only association (Sec. 3.4.2 ablation)."""
+
+    def _run(self, tracker: Tracker, detections: list[Detection]) -> None:
+        tracker.predict()
+        tracker.update(detections)
+
+    def test_iou_only_swaps_identities_that_appearance_preserves(self) -> None:
+        # Two confirmed nearby tracks with distinct appearances; the new
+        # detections keep their embeddings but sit at positions that IoU alone
+        # would pair the other way. With appearance ON, identity is preserved
+        # (verified in TrackerAssociationTests); with appearance OFF, the
+        # tracker must follow IoU instead -- proving the flag really changes
+        # the association path rather than being ignored.
+        emb_a, emb_b = _emb(1, 0), _emb(0, 1)
+        box_a, box_b = np.array([0.0, 0, 20, 20]), np.array([6.0, 0, 20, 20])
+
+        tracker = Tracker(tau=1, use_appearance=False)
+        for _ in range(2):
+            self._run(tracker, [Detection(box_a, embedding=emb_a), Detection(box_b, embedding=emb_b)])
+        self.assertEqual({t.track_id for t in tracker.tracks}, {1, 2})
+
+        # det at x=1 carries B's embedding, det at x=5 carries A's embedding.
+        self._run(
+            tracker,
+            [Detection(np.array([1.0, 0, 20, 20]), embedding=emb_b),
+             Detection(np.array([5.0, 0, 20, 20]), embedding=emb_a)],
+        )
+        track_a = next(t for t in tracker.tracks if t.track_id == 1)
+        # IoU-only: track A (predicted near x=0) takes the x=1 detection,
+        # ignoring that it carries B's embedding.
+        self.assertLess(track_a.bbox_xywh[0], 2.5)
+
+    def test_iou_only_still_tracks_a_simple_target(self) -> None:
+        # Sanity: the ablation must remain a working tracker, not a broken one.
+        tracker = Tracker(tau=1, use_appearance=False)
+        box = np.array([10.0, 10, 20, 20])
+        for _ in range(3):
+            self._run(tracker, [Detection(box, embedding=_emb(1, 0))])
+        self.assertEqual(len(tracker.tracks), 1)
+        self.assertTrue(tracker.tracks[0].is_confirmed())
+
+
 class ExpansionTargetTests(unittest.TestCase):
     def setUp(self) -> None:
         self.kf = KalmanFilter()

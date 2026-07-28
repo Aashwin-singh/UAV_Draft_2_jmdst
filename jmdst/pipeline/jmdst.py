@@ -58,8 +58,9 @@ class JMDSTTracker:
         c1: float = 0.9,
         i1: float = 0.1,
         i2: float = 0.1,
-        max_cosine_distance: float = 0.5,
+        max_cosine_distance: float = 0.3,
         max_age: int = 100,
+        use_appearance: bool = True,
     ) -> None:
         self.detector = detector
         self.localizer = localizer
@@ -67,6 +68,7 @@ class JMDSTTracker:
         self.tracker = Tracker(
             tau=tau, d=d, c1=c1, i1=i1, i2=i2,
             max_cosine_distance=max_cosine_distance, max_age=max_age,
+            use_appearance=use_appearance,
         )
         self.frame_index = 0
 
