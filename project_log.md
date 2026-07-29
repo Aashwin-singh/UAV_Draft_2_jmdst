@@ -16,10 +16,14 @@ documented rather than hidden.
 **Headline results** (val splits, tau=3, paper's conf=0.55, ignore regions
 applied where available):
 
-| Dataset | Detector | MOTA | MOTP | IDF1 | HOTA | FPS |
-|---|---|---:|---:|---:|---:|---:|
-| UAVDT | `uavdt_only` | 22.6 | 76.8 | 50.3 | 38.0 | 51.7 |
-| VisDrone | `retrain_aug` (combined) | 39.9 | 77.4 | 48.7 | 40.1 | ~21 |
+| Dataset | Detector | FELNet / assoc | MOTA | IDF1 | HOTA | FPS |
+|---|---|---|---:|---:|---:|---:|
+| UAVDT | `uavdt_only` | `rebalanced` + appearance | **25.3** | 51.7 | 38.7 | ~50 |
+| UAVDT | `uavdt_only` | `full_run` + IoU-only | 20.4 | 54.2 | **41.1** | ~52 |
+| VisDrone | `retrain_aug` | `full_run` + IoU-only | **40.5** | **51.8** | **42.0** | ~21 |
+
+Best-MOTA and best-HOTA configs differ (see the loss-rebalance follow-up
+below); pick per the metric you are reporting and say which you used.
 
 FPS exceeds the paper's (26.6 UAVDT / 18.6 VisDrone); accuracy is well below
 it, dominated by detector quality on hard sequences (see the improvement-work
@@ -65,6 +69,63 @@ FN increases ✓. **Diverged on FP**: the paper's FP *decreases* with tau
   trends are what this ablation validates.
 - Our FPS is much higher (48 vs 16 at tau=2) — YOLOv11n on an RTX 4070 vs the
   paper's RTX 3070, and we time inference only.
+
+### B-follow-up. FELNet loss rebalance (2026-07-28) — DIAGNOSIS CONFIRMED, NOT A NET WIN
+
+Acted on B's root-cause hypothesis: normalized overlap targets to ~[0,1]
+(`--overlap-scale 64`, commit `2e5c658`) so L_o stops swamping L_E, *without*
+changing the paper's lambda weights. Training losses went from
+L_o 27.6 / L_C 0.49 / L_E 0.92 to **0.48 / 0.50 / 0.97** — balanced, embedding
+now the largest term. Retrained 50 epochs (`outputs/felnet_runs/rebalanced/`).
+
+**FELNet component level — the diagnosis was right:**
+
+| Metric (held-out val) | old `full_run` | `rebalanced` |
+|---|---:|---:|
+| same-identity similarity | 0.758 | **0.898** |
+| diff-identity similarity | 0.105 | 0.116 |
+| **embedding separation** | 0.653 | **0.782 (+20%)** |
+| localization IoU | **0.634** | 0.610 |
+
+Embedding quality improved substantially, at a small localization cost —
+exactly the predicted trade.
+
+**End-to-end, full 2x2 (tau=3, per-dataset best detector, ignore regions):**
+
+| Dataset | FELNet | Assoc | MOTA | IDF1 | HOTA | AssA | IDs |
+|---|---|---|---:|---:|---:|---:|---:|
+| UAVDT | old | appearance | 22.6 | 50.3 | 38.0 | 42.9 | 125 |
+| UAVDT | old | IoU-only | 20.4 | 54.2 | **41.1** | **50.9** | **54** |
+| UAVDT | **rebalanced** | appearance | **25.3** | 51.7 | 38.7 | 44.5 | 99 |
+| UAVDT | rebalanced | IoU-only | 24.8 | **54.3** | 40.2 | 48.5 | 63 |
+| VisDrone | old | appearance | 39.9 | 48.7 | 40.1 | 41.5 | 1126 |
+| VisDrone | old | IoU-only | **40.5** | **51.8** | **42.0** | **45.9** | **656** |
+| VisDrone | rebalanced | appearance | 36.2 | 46.0 | 37.9 | 39.2 | 1275 |
+| VisDrone | rebalanced | IoU-only | 36.2 | 48.8 | 39.6 | 43.7 | 858 |
+
+**Three honest conclusions:**
+1. **The rebalance helps UAVDT and hurts VisDrone.** Best UAVDT MOTA rose
+   22.6 -> **25.3** (and appearance-path IDs fell 125 -> 99, -21%). But every
+   VisDrone number got worse (best MOTA 40.5 -> 36.2). The small localization
+   regression matters more on VisDrone's smaller, denser, more varied targets.
+   Net: **not a global win** — it is a dataset-dependent trade.
+2. **It did NOT flip the ablation.** IoU-only still beats appearance on
+   association metrics on *both* datasets with *both* checkpoints. The gap
+   narrowed on UAVDT (HOTA 3.1 -> 1.5) but never closed. Threshold tuning is
+   not the lever either: swept `max_cosine_distance` 0.15/0.3/0.5 on the new
+   checkpoint, HOTA spans only 38.3-38.8 vs IoU-only's 40.2.
+3. **Best configs are unchanged for HOTA**: old checkpoint + IoU-only remains
+   the HOTA leader on both datasets (UAVDT 41.1, VisDrone 42.0). The
+   rebalanced checkpoint owns exactly one crown: best UAVDT MOTA (25.3).
+
+**IMPORTANT CLAIM CORRECTION** (supersedes the wording in section B below):
+the paper's Sec. 3.4.2 compares FELNet against DeepSORT's **ReIDNet** —
+appearance-model vs appearance-model. It never tests appearance-vs-no-
+appearance. So "IoU-only beats our FELNet embeddings" is a finding **beyond**
+the paper's ablation, **not a contradiction of it**. We cannot claim the
+paper is wrong here; we can only report that on our data, with our FELNet, a
+learned appearance model did not beat spatial matching. Earlier phrasing in
+section B ("the opposite of the paper") overstated this.
 
 ### B. FELNet feature encoding (paper Sec. 3.4.2) — NEGATIVE RESULT
 
