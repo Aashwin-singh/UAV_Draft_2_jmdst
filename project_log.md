@@ -5,6 +5,43 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## IN PROGRESS — detector capacity upgrade: yolo11n → yolo11m (2026-08-06)
+
+Post-test improvement work. Rationale is the project's own repeated finding:
+**the detector is the dominant accuracy lever, not the tracker** (per-sequence
+MOTA spread 80.4 → negative on one split; paper Sec. 3.4.4 puts detector
+choice at ~8.6 MOTA). Every detector so far is yolo11n (2.6M params), the
+smallest variant; the paper never specifies a size, so scaling up is a
+faithful-but-stronger choice rather than a deviation.
+
+**Setup measured before launching anything** (RTX 4070 Laptop, 8 GB):
+
+| | params | train VRAM @ batch 16 | verdict |
+|---|---:|---:|---|
+| yolo11n (current) | 2.6M | 2.38 GB | fits |
+| yolo11m | 20.1M | **8.19 GB** | **OOM — exceeds the card** |
+| yolo11m @ batch 8 | 20.1M | 4.25 GB | use this |
+
+So yolo11m runs at `--batch 8`, not 16. This does **not** break the A/B against
+the yolo11n detectors: ultralytics accumulates to a nominal batch of 64
+(`nbs=64`), so the optimizer step is equivalent and weight decay is rescaled;
+only BatchNorm statistics differ. Full table and method in
+`scripts/train_yolo.py`'s docstring.
+
+**Cost**: ~20.2 ms/image to train vs ~4.9 for yolo11n (4.1×) — roughly 2.9
+min/epoch compute-only on `data/yolo_uavdt`, 8.7 min/epoch on `data/yolo`.
+Inference is much cheaper than feared: +3.3 ms/detection-frame on UAVDT,
++2.3 ms on VisDrone, and at tau=3 only a third of that per frame, because the
+JMDST loop is dominated by FELNet's per-target SSI work, not YOLO. Expect
+roughly −4% FPS on UAVDT and −1% on VisDrone, i.e. speed stays in the paper's
+range.
+
+**Pending**: two runs (`uavdt_only_m`, `retrain_aug_m`) to match the two
+current best configs, then a **val-only** conf re-tune. The last detector
+change (`retrain_aug`) shifted its own operating point and needed conf 0.45
+instead of 0.55 — so conf must be re-swept on val for the new detector before
+any test-split claim. Test stays held out.
+
 ## FINAL HELD-OUT TEST RESULTS (2026-07-28)
 
 Configs were fixed from val results **before** running test (detector, FELNet

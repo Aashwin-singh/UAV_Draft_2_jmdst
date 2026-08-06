@@ -16,12 +16,19 @@ blocked because the PyPI `mamba-ssm` sdist ships without its CUDA sources.
 
 ## Environment
 
-conda env `jmdst` (Python 3.11, PyTorch 2.11+cu128, RTX 4070). **Activate it
-for every command** — shell state does not persist between tool calls:
+conda env `jmdst` (Python 3.11, PyTorch 2.11+cu128, **RTX 4070 Laptop — 8 GB
+VRAM**, not the 12 GB desktop card). **Activate it for every command** — shell
+state does not persist between tool calls:
 
 ```bash
 conda activate jmdst
 ```
+
+The 8 GB budget is a real constraint on detector scale, not a footnote:
+YOLOv11m at the batch 16 every existing detector used needs 8.19 GB and OOMs.
+Measured per-variant VRAM and the correct `--batch` are in
+`scripts/train_yolo.py`'s module docstring — read it before launching any
+detector run larger than yolo11n.
 
 CUDA Toolkit 12.8 and VS Build Tools are installed. Building any CUDA
 extension additionally needs `vcvarsall.bat x64` run **in the same process**
