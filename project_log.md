@@ -5,6 +5,78 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## FINAL HELD-OUT TEST RESULTS (2026-07-28)
+
+Configs were fixed from val results **before** running test (detector, FELNet
+version, tau=3, conf 0.55, mcd 0.3 — all val-selected; see the sections
+below). Nothing was tuned on test. Both the faithful configuration (FELNet
+appearance matching, as the paper specifies) and the IoU-only ablation
+variant were run, as a clean A/B of association alone.
+
+**UAVDT test** — 8 sequences, 6,471 frames, 140,598 objects
+(detector `uavdt_only`, FELNet `rebalanced`, ignore regions applied):
+
+| Configuration | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Faithful (FELNet appearance) | **43.6** | 74.6 | 47.3 | 37.1 | **38.0** | 36.4 | 1,133 | 36.0 |
+| IoU-only variant | 43.1 | 74.8 | **49.1** | **38.8** | 37.6 | **40.2** | **682** | **46.9** |
+
+**VisDrone test** — 10 sequences, 3,812 frames, 84,302 objects
+(detector `retrain_aug`, FELNet `full_run`):
+
+| Configuration | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Faithful (FELNet appearance) | 27.3 | 78.3 | 41.3 | 36.3 | 29.2 | 45.4 | 643 | 18.3 |
+| IoU-only variant | **29.0** | **78.4** | **45.8** | **39.6** | **29.4** | **53.6** | **351** | **20.9** |
+
+### Three things the test split established
+
+1. **The IoU-only result REPLICATES on held-out data, on both datasets.**
+   UAVDT HOTA 38.8 vs 37.1 and IDs 682 vs 1,133 (-40%); VisDrone HOTA 39.6 vs
+   36.3 and IDs 351 vs 643 (-45%). This was the main risk of the Phase 11
+   finding being val overfitting — it was not. The negative result stands on
+   genuinely unseen data, which makes it a real finding rather than an artifact.
+2. **Val and test moved in OPPOSITE directions, by a lot.** UAVDT val 25.3 ->
+   test 43.6 (+18.3); VisDrone val 39.9 -> test 27.3 (-12.6). Cause is split
+   composition: the paper never publishes its sequence names, so our splits are
+   seeded-random, and UAVDT val happened to contain the pathological M1101
+   (MOTA -18 to -38) while VisDrone test drew harder sequences. **Practical
+   consequence: single-split numbers from this reproduction carry large
+   variance and should be quoted with the per-sequence spread, not alone.**
+3. **Speed matches or beats the paper on both datasets.** UAVDT 36.0-46.9 FPS
+   vs the paper's 26.6; VisDrone 18.3-20.9 vs 18.6. (Newer GPU — RTX 4070 vs
+   the paper's 3070 — and we time inference only, so this is indicative, not a
+   like-for-like claim.)
+
+### Per-sequence spread (faithful config) — the average hides a lot
+
+| UAVDT test | MOTA | | VisDrone test | MOTA |
+|---|---:|---|---|---:|
+| M0101 | **80.4** | | uav0000308_00000_v | **69.6** |
+| M0603 | 67.2 | | uav0000306_00230_v | 46.6 |
+| M0703 | 61.0 | | uav0000316_01288_v | 38.3 |
+| M1301 | 44.6 | | uav0000119_02301_v | 33.3 |
+| M1004 | 15.7 | | uav0000124_00944_v | 29.1 |
+| M1006 | 10.9 | | uav0000315_00000_v | 26.0 |
+| M0210 | -2.5 | | uav0000370_00001_v | 8.4 |
+| M1009 | -1.4 | | uav0000263_03289_v | -21.2 |
+| | | | uav0000073_00600_v | -69.2* |
+
+\* 22 ground-truth objects in the whole sequence — MOTA is meaningless at that
+scale (9 FP + 13 FN). Reported for completeness, not interpretation.
+
+UAVDT M0101 at **MOTA 80.4** and VisDrone uav0000308 at **69.6** are the
+strongest evidence in the project that the tracking architecture works when
+detection is reliable — the same conclusion the val per-sequence analysis
+reached, now confirmed on unseen data.
+
+**Cannot compare accuracy to the paper's UAVDT/VisDrone tables**: those tables
+are images in the PDF and their values were never extracted. Only the paper's
+FPS figures (abstract) and its MDMT ablation tables are available as numbers,
+so accuracy comparisons in this project are limited to trends, not values.
+
+Artifacts: `outputs/test_final/{uavdt,visdrone}_{faithful,iou}.{md,json}`.
+
 ## STATUS: all 11 phases implemented (10 complete, Phase 6 blocked)
 
 Phases 1-5 and 7-11 are done, verified, and committed. **Phase 6 (MSFP) is

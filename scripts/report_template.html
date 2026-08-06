@@ -234,26 +234,27 @@
     <h2>What was built, and what it scores</h2>
     <p>
       Ten of the paper's eleven implementation phases are complete, verified against real
-      data, and committed. Every number below is measured on <b>validation</b> splits —
-      the test splits were deliberately never touched, so a clean held-out evaluation
-      remains available.
+      data, and committed. The headline figures below are from the <b>held-out test
+      splits</b>, evaluated once, with every configuration choice fixed beforehand on
+      validation data.
     </p>
 
     <div class="score-grid">
       <div class="score"><span class="k">Phases complete</span><span class="v">10 / 11</span><span class="sub">MSFP blocked upstream</span></div>
       <div class="score"><span class="k">Automated tests</span><span class="v">93</span><span class="sub">all passing</span></div>
       <div class="score"><span class="k">Annotations verified</span><span class="v">929,343</span><span class="sub">0 data defects</span></div>
-      <div class="score"><span class="k">VisDrone MOTA</span><span class="v">40.5</span><span class="sub">HOTA 42.0 · ~21 FPS</span></div>
-      <div class="score"><span class="k">UAVDT MOTA</span><span class="v">25.3</span><span class="sub">HOTA 38.7 · ~50 FPS</span></div>
-      <div class="score"><span class="k">Speed vs paper</span><span class="v">1.9&times;</span><span class="sub">50 vs 26.6 FPS, UAVDT</span></div>
+      <div class="score"><span class="k">UAVDT MOTA <span class="muted">test</span></span><span class="v">43.6</span><span class="sub">HOTA 37.1 · 36 FPS</span></div>
+      <div class="score"><span class="k">VisDrone MOTA <span class="muted">test</span></span><span class="v">27.3</span><span class="sub">HOTA 36.3 · 18 FPS</span></div>
+      <div class="score"><span class="k">Speed vs paper</span><span class="v">1.4&times;</span><span class="sub">36 vs 26.6 FPS, UAVDT</span></div>
     </div>
 
     <div class="note">
-      <strong>Honest framing.</strong> Inference speed matches or exceeds the paper's;
-      tracking accuracy does not. The gap is measured, root-caused, and attributed
-      primarily to detector quality on difficult sequences — not to the tracking
-      architecture, which is validated and works. The evidence for that claim is in the
-      ablations and per-sequence breakdowns below.
+      <strong>Honest framing.</strong> Inference speed matches or exceeds the paper's on
+      both datasets. Tracking accuracy cannot be compared directly to the paper's — its
+      UAVDT and VisDrone results tables are images in the PDF, so their values were never
+      available as numbers. What <em>can</em> be assessed is internal: the architecture
+      works, the remaining weakness is detector quality on hard sequences, and the
+      per-sequence spread below is the evidence for that.
     </div>
   </section>
 
@@ -664,6 +665,107 @@
   </section>
 </div>
 
+<!-- ============ FINAL TEST ============ -->
+<div class="wide">
+  <section>
+    <p class="eyebrow">Final evaluation</p>
+    <h2>Held-out test results</h2>
+    <div class="col" style="margin-inline:0">
+      <p>
+        The test splits were untouched for the entire project. Every configuration
+        choice — which detector, which trained FELNet, the detection interval, the
+        thresholds — was fixed from validation results <em>before</em> this evaluation
+        ran, so these numbers are a genuine estimate of generalization rather than a
+        tuned result.
+      </p>
+      <p>
+        Both the faithful configuration (FELNet appearance matching, exactly as the paper
+        specifies) and the position-only variant were run, differing in <em>nothing</em>
+        but the association step.
+      </p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption>UAVDT test — 8 sequences, 6,471 frames, 140,598 objects</caption>
+        <thead><tr><th>Configuration</th><th class="n">MOTA</th><th class="n">MOTP</th><th class="n">IDF1</th><th class="n">HOTA</th><th class="n">DetA</th><th class="n">AssA</th><th class="n">ID switches</th><th class="n">FPS</th></tr></thead>
+        <tbody>
+          <tr class="best"><td>Faithful — FELNet appearance</td><td class="n"><b>43.6</b></td><td class="n">74.6</td><td class="n">47.3</td><td class="n">37.1</td><td class="n">38.0</td><td class="n">36.4</td><td class="n">1,133</td><td class="n">36.0</td></tr>
+          <tr><td>Variant — position only</td><td class="n">43.1</td><td class="n">74.8</td><td class="n"><b>49.1</b></td><td class="n"><b>38.8</b></td><td class="n">37.6</td><td class="n"><b>40.2</b></td><td class="n"><b>682</b></td><td class="n"><b>46.9</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption>VisDrone test — 10 sequences, 3,812 frames, 84,302 objects</caption>
+        <thead><tr><th>Configuration</th><th class="n">MOTA</th><th class="n">MOTP</th><th class="n">IDF1</th><th class="n">HOTA</th><th class="n">DetA</th><th class="n">AssA</th><th class="n">ID switches</th><th class="n">FPS</th></tr></thead>
+        <tbody>
+          <tr><td>Faithful — FELNet appearance</td><td class="n">27.3</td><td class="n">78.3</td><td class="n">41.3</td><td class="n">36.3</td><td class="n">29.2</td><td class="n">45.4</td><td class="n">643</td><td class="n">18.3</td></tr>
+          <tr class="best"><td>Variant — position only</td><td class="n"><b>29.0</b></td><td class="n"><b>78.4</b></td><td class="n"><b>45.8</b></td><td class="n"><b>39.6</b></td><td class="n">29.4</td><td class="n"><b>53.6</b></td><td class="n"><b>351</b></td><td class="n"><b>20.9</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-inline:0">
+      <h3>The negative result held up on unseen data</h3>
+      <p>
+        The single biggest risk to the ablation finding was that it reflected quirks of
+        the validation split. It did not. On data never used for any decision, matching
+        on position alone still beat matching on learned appearance — on both datasets,
+        cutting identity switches by <b>40%</b> on UAVDT and <b>45%</b> on VisDrone.
+        A result that replicates on held-out data is a finding, not an artifact.
+      </p>
+
+      <h3>Validation and test disagreed sharply — in opposite directions</h3>
+      <p>
+        UAVDT scored far better on test than validation (MOTA 25.3 → 43.6); VisDrone
+        scored far worse (39.9 → 27.3). The cause is split composition: the paper never
+        publishes which sequences it uses, so these splits were drawn randomly from a
+        fixed seed, and difficulty landed unevenly — validation happened to contain one
+        pathological UAVDT sequence, while the VisDrone test draw was harder.
+      </p>
+      <div class="note warn">
+        <strong>What follows from that.</strong> Single-split scores from this
+        reproduction carry large variance and should always be quoted alongside the
+        per-sequence spread. This is a property of evaluating on a handful of long video
+        sequences, and it is worth stating plainly rather than presenting one number as
+        definitive.
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption>Per-sequence spread on test, faithful configuration</caption>
+        <thead><tr><th>UAVDT sequence</th><th class="n">MOTA</th><th>VisDrone sequence</th><th class="n">MOTA</th></tr></thead>
+        <tbody>
+          <tr><td>M0101</td><td class="n up"><b>80.4</b></td><td>uav0000308_00000_v</td><td class="n up"><b>69.6</b></td></tr>
+          <tr><td>M0603</td><td class="n">67.2</td><td>uav0000306_00230_v</td><td class="n">46.6</td></tr>
+          <tr><td>M0703</td><td class="n">61.0</td><td>uav0000316_01288_v</td><td class="n">38.3</td></tr>
+          <tr><td>M1301</td><td class="n">44.6</td><td>uav0000119_02301_v</td><td class="n">33.3</td></tr>
+          <tr><td>M1004</td><td class="n">15.7</td><td>uav0000124_00944_v</td><td class="n">29.1</td></tr>
+          <tr><td>M1006</td><td class="n">10.9</td><td>uav0000315_00000_v</td><td class="n">26.0</td></tr>
+          <tr><td>M0210</td><td class="n down">&minus;2.5</td><td>uav0000370_00001_v</td><td class="n">8.4</td></tr>
+          <tr><td>M1009</td><td class="n down">&minus;1.4</td><td>uav0000263_03289_v</td><td class="n down">&minus;21.2</td></tr>
+          <tr><td class="muted">—</td><td class="n muted">—</td><td>uav0000073_00600_v</td><td class="n muted">&minus;69.2*</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col" style="margin-inline:0">
+      <p class="muted" style="font-size:.88rem">
+        * 22 ground-truth objects across the entire sequence, so MOTA is statistically
+        meaningless there (9 false positives, 13 misses). Included for completeness.
+      </p>
+      <p>
+        <b>UAVDT M0101 reaches MOTA 80.4 and VisDrone uav0000308 reaches 69.6</b> on data
+        the system had never seen. That is the clearest confirmation available that the
+        tracking architecture is sound, and that the low averages come from sequences
+        where detection fails rather than from the tracker.
+      </p>
+    </div>
+  </section>
+</div>
+
 <!-- ============ DEVIATIONS ============ -->
 <div class="wide">
   <section>
@@ -768,15 +870,24 @@ python scripts/run_ablations.py --datasets uavdt --split val</code></pre>
       footage, at speeds matching or exceeding the paper's.
     </p>
     <p>
-      Accuracy falls short of the published figures, and the reason has been isolated
-      rather than assumed: detector quality on difficult sequences, evidenced by the
-      per-sequence spread from <b>MOTA 59.4</b> where detection is reliable to negative
-      values where it is not. The tracking architecture itself was validated
-      independently and holds identities without error under clean detections.
+      On held-out test data the system reaches <b>MOTA 43.6</b> on UAVDT and
+      <b>27.3</b> on VisDrone, with per-sequence peaks of <b>80.4</b> and <b>69.6</b>.
+      That spread — strong where detection is reliable, poor where it is not — is the
+      evidence that the remaining weakness sits in the detector rather than the tracking
+      architecture, which was separately validated to hold identities without error under
+      clean detections.
     </p>
     <p>
-      Test splits remain untouched, so a clean final evaluation is still available on
-      genuinely held-out data.
+      Two findings came out of the work that were not in the original plan. Matching on
+      position alone outperformed the learned appearance model on both datasets, and it
+      replicated on held-out data — reported as found, with the limits of the claim
+      stated. And a diagnosed loss-scaling imbalance was confirmed by experiment, even
+      though fixing it turned out to help one dataset and hurt the other.
+    </p>
+    <p>
+      What remains open is documented rather than hidden: the MSFP module could not be
+      built because of an upstream packaging fault, and it is worth roughly 1% of the
+      metrics by the paper's own ablation.
     </p>
   </section>
 </div>
