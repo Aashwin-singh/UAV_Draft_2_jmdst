@@ -279,94 +279,36 @@ they meet **all** of:
 
 # B. Current implementation status
 
-**Environment** — conda env `jmdst`, Python 3.11.15, PyTorch 2.11.0+cu128,
-RTX 4070 Laptop GPU, CUDA verified working via `torch.cuda.is_available()`.
-Installed: torch, torchvision, ultralytics, numpy, pandas, Pillow, scipy,
-PyYAML, tqdm, opencv-python, motmetrics. **Not installed**: `mamba-ssm` (fails
-to install — acceptable for now, MSFP is Phase 6, don't spend time on it yet).
+**This section is a pointer, not a record.** Two files carry the live state:
 
-**Repository layout**:
-```
-_UAV_DRAFT_2/
-    agents/
-    configs/
-    jmdst/
-    outputs/
-    scripts/
-    tests/
-    README.md
-    requirements.txt
-    VisDrone_MOT/      # raw dataset, ideally moves under datasets/
-    UAVDT/             # raw dataset, ideally moves under datasets/
-```
-`.gitignore` excludes datasets, outputs, checkpoints, cache files. First git
-commit made after Phase 1 (dataset prep). Commit after every future
-milestone, only after it's verified.
+- **`ARCHITECTURE.md`** — module map, data flow, and the non-obvious
+  invariants. Read this before making architecture-level changes.
+- **`project_log.md`** — chronological results, every measurement, all
+  deviations from the paper, and the final held-out test numbers.
 
-**Unified dataset format** (`data/unified/{visdrone,uavdt}/<sequence>/`):
-```
-seqinfo.json
-annotations.jsonl      # one JSON object per line, per frame:
-{
-    "frame_id": 1,
-    "image_path": "...",
-    "objects": [
-        {"track_id": 1, "class_id": 0, "class_name": "car", "bbox_xywh": [x, y, w, h]}
-    ]
-}
-```
+Section A above remains ground truth for *what the paper specifies*. These two
+files describe *what this repository actually does*.
 
-## B.1 Already implemented and working
+**Summary as of 2026-07-28**
 
-- **Dataset converters** for VisDrone2019 MOT and UAVDT → unified format above.
-- **SSI crop generator** implementing the Sec. A.2 formula, dynamic crop size,
-  resize to 64×64.
-- **FELNet target generation**: overlap targets, confidence targets, anchor
-  assignment (Sec. A.3 rules).
-- **PyTorch dataset classes**: Detection Dataset, FELNet Dataset, Tracking
-  Sequence Dataset — all PyTorch-ready.
-- **Visualization script** for bounding boxes and SSI crops.
-- **Synthetic dataset generator** for debugging without real data.
-- **Unit tests** (`python -m unittest discover -s tests -v`).
-- **Dataset verification script** (`scripts/verify_dataset.py`, added this
-  session): walks the unified format, reports sequence/frame/annotation
-  counts, class distribution, bbox validity + statistics (width/height/area/
-  aspect ratio), missing/corrupted images, duplicate track IDs per frame, and
-  simulated SSI crop-size statistics using the Sec. A.2 formula (including how
-  many crops would exceed image bounds pre-padding). Outputs
-  `outputs/verification/report.json` and `report.md`.
+- **10 of 11 phases implemented.** Phases 1-5 and 7-11 are complete, verified,
+  and committed. 93 tests pass (`python -m unittest discover -s tests`).
+- **Phase 6 (MSFP) is the only gap.** Blocked because the PyPI `mamba-ssm`
+  sdist ships without the CUDA sources its own `setup.py` requires — not a
+  Windows-specific fault. The paper's ablation puts MSFP at ~1% of the
+  metrics, so it was deprioritized rather than allowed to block the project.
+  Real paths forward are recorded in `project_log.md`.
+- **Final held-out test results**: UAVDT MOTA 43.6 / HOTA 37.1 at 36 FPS;
+  VisDrone MOTA 27.3 / HOTA 36.3 at 18.3 FPS (faithful configuration, with
+  the IoU-only variant reported alongside). Speed matches or exceeds the
+  paper's; accuracy cannot be compared directly because the paper's UAVDT and
+  VisDrone tables are images in the PDF whose values were never extractable.
+- **Environment**: conda env `jmdst`. Raw datasets live under `Datasets/`
+  (capital D); `data/`, `outputs/` and all checkpoints are gitignored and
+  regenerable.
 
-Dataset conversion has completed successfully. No learning model has been
-implemented yet — everything above is data infrastructure.
-
-## B.2 Not yet implemented (in roadmap order)
-
-- **Current task**: run `scripts/verify_dataset.py` against the real converted
-  data, review the report, fix any flagged issues (invalid boxes, missing/
-  corrupted images) before touching YOLO training.
-- **Phase 2 — YOLOv11**: unified→YOLO format converter, `dataset.yaml`
-  generation, train/val/inference scripts, checkpoint saving, visualization.
-  Train with YOLOv11's default parameters (per A.7); apply NMS 0.2 / conf 0.55
-  at inference (per A.8).
-- **Phase 3 — FELNet architecture**: implement per Table in A.3 exactly
-  (channel counts, kernel sizes, output shapes, three-head design).
-- **Phase 4 — FELNet training**: implement Algorithm 2 / losses in A.4.
-- **Phase 5 — Feature extraction**: run trained FELNet over all unified data,
-  save embedding sequences (input for MSFP training).
-- **Phase 6 — MSFP**: blocked on `mamba-ssm` installing successfully. 3
-  stacked Mamba blocks per A.5. Do not start until Mamba is resolved.
-- **Phase 7 — Tracking infrastructure**: Kalman filter, track lifecycle/states
-  (tentative/confirmed/deleted).
-- **Phase 8 — Modified DeepSORT**: cascade matching (FELNet/MSFP embeddings)
-  + IoU matching per A.6, including the missed-detection expansion and output
-  filtering rules.
-- **Phase 9 — Full JMDST integration**: wire YOLOv11 → SSI crop → FELNet →
-  MSFP → modified DeepSORT into Algorithm 1's application routine.
-- **Phase 10 — Evaluation**: MOTA/MOTP/IDF1/HOTA/FPS on VisDrone2019 and
-  UAVDT test splits (A.9).
-- **Phase 11 — Ablations**: without MSFP, varying τ, YOLO-only, standard
-  DeepSORT ReID instead of FELNet — mirrors the paper's own ablation study
-  design (Sec. 3.4 of the paper) so results are comparable.
+A presentation-ready report with per-phase figures and every results table is
+generated by `scripts/make_presentation_figures.py` + `scripts/build_report.py`.
 
 ---
 
