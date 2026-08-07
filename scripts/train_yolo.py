@@ -27,6 +27,30 @@ Usage (YOLOv11m capacity upgrade -- note the mandatory smaller ``--batch``):
     python scripts/train_yolo.py --data data/yolo_uavdt/dataset.yaml --model yolo11m.pt \
         --epochs 150 --patience 20 --batch 8 --strong-aug --name uavdt_only_m
 
+Usage (yolo11m with the LR fix -- see "Overfitting at yolo11m scale" below):
+    python scripts/train_yolo.py --data data/yolo_uavdt/dataset.yaml --model yolo11m.pt \
+        --epochs 60 --patience 15 --batch 8 --lr0 0.0025 --strong-aug \
+        --name uavdt_only_m_lowlr
+
+
+Overfitting at yolo11m scale (measured 2026-08-06)
+--------------------------------------------------
+``uavdt_only_m`` (yolo11m, batch 8, everything else at defaults) peaked at
+**epoch 1** and early-stopped at 21. That checkpoint is still the best UAVDT
+detector this project has by mAP -- mAP50 0.701 / mAP50-95 0.411 vs yolo11n's
+0.673 / 0.367 -- but it wins at the point where the model is barely
+fine-tuned, and it *loses* recall (0.614 vs 0.658), the axis UAVDT tracking
+has been most sensitive to.
+
+After epoch 1 it is textbook overfitting: train box loss falls 1.47 -> 0.85
+(yolo11n only reaches 1.05) while val cls loss *rises* 1.15 -> 1.45. 20.1M
+params memorise 8,472 correlated video frames quickly.
+
+Both runs share an identical LR schedule (warmup ramps to ~0.0296 by epoch 3),
+so this is capacity, not a config difference -- the larger model simply has
+more pretrained structure to lose at that LR. Hence ``--lr0`` and ``--freeze``:
+adapt COCO features gently instead of overwriting them.
+
 
 Choosing ``--batch`` for a model size (RTX 4070 Laptop, 8 GB)
 ------------------------------------------------------------
@@ -98,6 +122,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Anti-overfit augmentation preset (deviates from paper defaults). See module docstring.",
     )
+    parser.add_argument(
+        "--lr0",
+        type=float,
+        default=None,
+        help=(
+            "Override ultralytics' initial LR (its 'auto' optimizer picks 0.01, which warms "
+            "up to ~0.03). Lower this for high-capacity variants: yolo11m peaked at epoch 1 "
+            "on data/yolo_uavdt at the default, i.e. it degraded COCO-pretrained features "
+            "faster than it learned dataset-specific ones. Try 0.002-0.003."
+        ),
+    )
+    parser.add_argument(
+        "--freeze",
+        type=int,
+        default=None,
+        help=(
+            "Freeze the first N layers (10 = the YOLO11 backbone). Preserves COCO features "
+            "on small, video-correlated training sets where full fine-tuning overfits."
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     return parser
 
@@ -123,7 +167,14 @@ STRONG_AUG = {
 def main() -> None:
     args = build_parser().parse_args()
     model = YOLO(args.model)
-    extra = STRONG_AUG if args.strong_aug else {}
+    # Copy, so adding lr0/freeze below never mutates the module-level constant.
+    extra = dict(STRONG_AUG) if args.strong_aug else {}
+    # Only forward these when set, so an unspecified flag leaves ultralytics'
+    # own default in place rather than overriding it with None.
+    if args.lr0 is not None:
+        extra["lr0"] = args.lr0
+    if args.freeze is not None:
+        extra["freeze"] = args.freeze
     model.train(
         data=args.data,
         epochs=args.epochs,
