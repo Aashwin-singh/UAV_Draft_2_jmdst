@@ -36,11 +36,65 @@ JMDST loop is dominated by FELNet's per-target SSI work, not YOLO. Expect
 roughly −4% FPS on UAVDT and −1% on VisDrone, i.e. speed stays in the paper's
 range.
 
-**Pending**: two runs (`uavdt_only_m`, `retrain_aug_m`) to match the two
-current best configs, then a **val-only** conf re-tune. The last detector
-change (`retrain_aug`) shifted its own operating point and needed conf 0.45
-instead of 0.55 — so conf must be re-swept on val for the new detector before
-any test-split claim. Test stays held out.
+### UAVDT result (2026-08-07) — yolo11m WINS, but only after re-tuning conf UP
+
+`uavdt_only_m` trained (batch 8, else identical to `uavdt_only`). It **peaked
+at epoch 1** and early-stopped at 21 — textbook overfitting past that (train
+box loss 1.47 -> 0.85 where yolo11n only reaches 1.05, while val cls loss
+*rises* 1.15 -> 1.45). Both runs share an identical LR schedule (warmup to
+~0.0296 by epoch 3), so this is capacity, not config.
+
+Detector quality at each run's own best epoch, UAVDT val:
+
+| | best ep | mAP50 | mAP50-95 | P | R |
+|---|---:|---:|---:|---:|---:|
+| `uavdt_only` (yolo11n) | 7 | 0.673 | 0.367 | 0.647 | **0.658** |
+| `uavdt_only_m` (yolo11m) | **1** | **0.701** | **0.411** | **0.716** | 0.614 |
+
+**End-to-end conf sweep** (tau=3, FELNet `rebalanced`, appearance matching,
+ignore regions — all identical to the baseline row, detector is the only
+variable):
+
+| Detector / conf | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `uavdt_only` (n) @ 0.55 | 25.3 | 76.2 | 51.7 | 38.7 | 33.7 | 44.5 | **99** | 7069 | 9964 | 55.9 |
+| `uavdt_only_m` @ 0.35 | 7.6 | 76.1 | 52.6 | 39.9 | 33.0 | 48.4 | 210 | 12954 | 8007 | 37.4 |
+| `uavdt_only_m` @ 0.45 | 13.2 | 76.2 | 53.6 | 40.6 | 33.9 | 48.7 | 184 | 11470 | 8239 | 33.4 |
+| `uavdt_only_m` @ 0.55 | 18.3 | 76.4 | 55.0 | 41.6 | 34.7 | 49.9 | 195 | 10014 | 8509 | 47.7 |
+| `uavdt_only_m` @ 0.65 | 22.0 | 76.6 | **56.6** | **42.2** | 34.8 | **51.3** | 147 | 8702 | 9039 | 47.7 |
+| **`uavdt_only_m` @ 0.75** | **28.7** | 77.0 | 55.0 | 41.5 | **35.2** | 49.0 | 132 | **6232** | 9978 | 51.9 |
+| `uavdt_only_m` @ 0.85 | 18.9 | **78.2** | 29.0 | 25.1 | 20.5 | 30.8 | 70 | 1817 | 16709 | **67.8** |
+
+**Three conclusions:**
+
+1. **The conf threshold had to move UP, not down.** The prediction from the
+   detector's P/R (higher precision, lower recall -> lower conf) was **wrong**:
+   at a fixed threshold the barely-fine-tuned epoch-1 model retains COCO's
+   calibration and passes *more* boxes, so it over-detects. Every metric
+   improves monotonically 0.35 -> 0.75. 0.85 collapses (FN 16,709).
+2. **At conf 0.75 yolo11m beats the yolo11n baseline on every accuracy metric**
+   — MOTA +3.4, IDF1 +3.3, HOTA +2.8, DetA +1.5, AssA +4.5, MOTP +0.8, and
+   fewer FP (6232 vs 7069) at equal FN. The only regressions are ID switches
+   (132 vs 99) and FPS (51.9 vs 55.9). No trade-off to arbitrate: 0.75
+   dominates. (conf 0.65 is the HOTA/IDF1/AssA optimum but drops MOTA below
+   baseline, so it is not the better pick.)
+3. **The win is concentrated in the FP-dominated sequences.** Per-sequence
+   MOTA, nano @0.55 -> m @0.75: M1101 **-11.5 -> -0.6** (+10.9, the project's
+   worst sequence nearly fixed), M0203 **48.0 -> 54.6** (+6.6), but M0401
+   **40.9 -> 36.9** (-4.0). M0401 is the FN-dominated dense scene, so raising
+   conf costs recall exactly where recall was already the weak spot. The
+   optimal threshold is genuinely sequence-dependent; 0.75 is the best single
+   compromise and per-sequence tuning would be val overfitting.
+
+**Deviation to declare**: conf 0.75 is a large departure from the paper's 0.55.
+Same justification as the earlier `retrain_aug` @ 0.45 case — the paper's
+threshold was tuned for the paper's own detector, and ours has a different
+operating point. **Chosen on val; test remains held out.**
+
+**Pending**: `retrain_aug_m` (combined detector, for VisDrone) not yet run.
+A low-LR retrain (`--lr0 0.0025`, now exposed on `train_yolo.py`) is the
+obvious follow-up to the epoch-1 overfitting, and `yolo11s` is worth a look —
+9.4M params and it fits at batch 16, so it keeps an even cleaner A/B.
 
 ## FINAL HELD-OUT TEST RESULTS (2026-07-28)
 

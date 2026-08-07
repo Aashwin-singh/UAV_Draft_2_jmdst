@@ -154,11 +154,18 @@ held-out test numbers.
 
 | Dataset | Detector | FELNet | Association |
 |---|---|---|---|
-| UAVDT | `uavdt_only` | `rebalanced` (`overlap_scale=64`) | appearance (best MOTA) |
+| UAVDT | `uavdt_only_m` @ **conf 0.75** | `rebalanced` (`overlap_scale=64`) | appearance (best MOTA) |
 | VisDrone | `retrain_aug` (combined) | `full_run` (`overlap_scale=1`) | IoU-only (best on all metrics) |
 
 Checkpoints live under `outputs/` and are **gitignored** — retrain or copy
 them; they do not come with a fresh clone.
+
+**A detector swap invalidates the confidence threshold.** It is not a
+transferable hyperparameter: `retrain_aug` needed 0.45, `uavdt_only_m` needs
+**0.75**, against the paper's 0.55. Re-sweep conf on val after any detector
+change — `uavdt_only_m` reads as a 7-point MOTA *regression* at 0.55 and a
+3.4-point *gain* at 0.75, from the same weights. Sweep before concluding
+anything about a new detector.
 
 ---
 
