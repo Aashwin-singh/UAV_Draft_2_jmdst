@@ -152,20 +152,60 @@ run by the user, not launched in the background.
 Selected on validation; see `project_log.md` for the full tables and the
 held-out test numbers.
 
-| Dataset | Detector | FELNet | Association |
+### The general configuration (use this)
+
+**One** setting for all inputs — the deployment target, since the model must
+handle arbitrary UAV footage rather than a specific benchmark:
+
+| Detector | FELNet | Association | conf |
 |---|---|---|---|
-| UAVDT | `uavdt_only_m` @ **conf 0.75** | `rebalanced` (`overlap_scale=64`) | appearance (best MOTA) |
-| VisDrone | `retrain_aug` (combined) | `full_run` (`overlap_scale=1`) | IoU-only (best on all metrics) |
+| `retrain_aug_m` (combined yolo11m) | `full_run` (`overlap_scale=1`) | IoU-only | **0.45** |
+
+| | UAVDT val | VisDrone val |
+|---|---:|---:|
+| HOTA | **43.2** | **43.5** |
+| IDF1 | 57.4 | 52.8 |
+| MOTA | 19.9\* | 45.4 |
+| IDs | 67 | 871 |
+
+HOTA lands within 0.3 of itself across two very different datasets, and conf
+0.45 maximises the *worse* of the two — the right criterion for a general
+model, rather than the average.
+
+\* **UAVDT MOTA is deflated by a labelling artifact, not by tracking quality.**
+The combined detector finds cars generally; UAVDT labels only some of them, so
+the extras score as FP (10,628 vs the UAVDT-only detector's 5,271) and MOTA
+punishes FP linearly while HOTA does not. On the same run the general config
+has *better* association than the UAVDT-specific one (IDs 67 vs 139, AssA 51.9
+vs 51.5). **Report HOTA as the headline and state the UAVDT MOTA caveat.**
+
+### Per-dataset optima (reference only — do not ship these)
+
+| Dataset | Detector | FELNet | Association | HOTA |
+|---|---|---|---|---:|
+| UAVDT | `uavdt_only_m_lowlr` @ conf 0.65 | `rebalanced` (`overlap_scale=64`) | appearance | 44.6 |
+| VisDrone | `retrain_aug_m` @ conf 0.45 | `full_run` | IoU-only | 43.5 |
+
+Generalising costs **1.4 HOTA on UAVDT and nothing on VisDrone** — VisDrone's
+per-dataset optimum *is* the general config.
 
 Checkpoints live under `outputs/` and are **gitignored** — retrain or copy
 them; they do not come with a fresh clone.
 
-**A detector swap invalidates the confidence threshold.** It is not a
-transferable hyperparameter: `retrain_aug` needed 0.45, `uavdt_only_m` needs
-**0.75**, against the paper's 0.55. Re-sweep conf on val after any detector
-change — `uavdt_only_m` reads as a 7-point MOTA *regression* at 0.55 and a
-3.4-point *gain* at 0.75, from the same weights. Sweep before concluding
-anything about a new detector.
+**A detector swap invalidates the confidence threshold**, and so does a
+dataset swap. Against the paper's 0.55, the current detectors want **0.65**
+(UAVDT) and **0.45** (VisDrone) — opposite directions. `uavdt_only_m` reads as
+a 7-point MOTA *regression* at 0.55 and a 3.4-point *gain* at 0.75, from
+identical weights. Always re-sweep on val, and bracket until the metric turns
+over: both datasets' optima were initially missed by sweeping too narrow a
+range.
+
+**Judge a detector on the association mode you actually ship.** On VisDrone,
+`retrain_aug_m` looks like a *reject* under appearance matching (HOTA -1.3,
+AssA -5.1) and a clear *adopt* under IoU-only (HOTA +1.3, AssA +0.1) — same
+weights, same sweep. yolo11m's extra detections overwhelm FELNet's appearance
+matching but not IoU matching, so the appearance model degrades exactly as the
+detector improves.
 
 ---
 
@@ -176,7 +216,14 @@ anything about a new detector.
   by the paper's own ablation, so low priority.
 - **Detector quality is the dominant accuracy lever**, not the tracker. The
   per-sequence spread (MOTA 80.4 down to negative on the same split) is the
-  evidence.
+  evidence — and acting on it delivered the project's largest single gain:
+  yolo11n -> yolo11m at a corrected LR took UAVDT val MOTA 25.3 -> 36.4
+  (HOTA 38.7 -> 44.6). See `project_log.md`.
+- **ultralytics' `optimizer='auto'` discards `lr0`** and picks the optimizer by
+  iteration count, so `--epochs` alone can switch MuSGD <-> AdamW. Pinning the
+  optimizer in turn changes `momentum` and `warmup_bias_lr` away from what
+  `auto` sets. `scripts/train_yolo.py` guards the first case and documents all
+  three; read its docstring before any comparative training run.
 - **Appearance matching underperforms IoU-only** on both datasets, and it
   replicated on held-out test. The loss-rebalance fix confirmed the diagnosed
   mechanism but was a dataset-dependent trade, not a general win.

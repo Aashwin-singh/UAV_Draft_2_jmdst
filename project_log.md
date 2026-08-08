@@ -91,10 +91,198 @@ Same justification as the earlier `retrain_aug` @ 0.45 case — the paper's
 threshold was tuned for the paper's own detector, and ours has a different
 operating point. **Chosen on val; test remains held out.**
 
-**Pending**: `retrain_aug_m` (combined detector, for VisDrone) not yet run.
-A low-LR retrain (`--lr0 0.0025`, now exposed on `train_yolo.py`) is the
-obvious follow-up to the epoch-1 overfitting, and `yolo11s` is worth a look —
-9.4M params and it fits at batch 16, so it keeps an even cleaner A/B.
+### yolo11s (2026-08-07) — RULED OUT, dominated by both nano and medium
+
+`uavdt_only_s` (9.4M params, batch 16 — so args are *byte-identical* to
+`uavdt_only` apart from the model, the cleanest A/B in this project). Peaked
+at **epoch 3**, early-stopped at 23.
+
+| conf | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.45 | 6.3 | 76.1 | 47.2 | 37.9 | 32.5 | 44.4 | 223 | 12672 | 8577 | 40.8 |
+| 0.55 | 9.6 | 76.4 | 48.6 | 38.2 | 32.3 | 45.3 | 220 | 11206 | 9296 | 44.8 |
+| 0.65 | 15.2 | 76.9 | 50.4 | **39.2** | 32.6 | **47.3** | 163 | 9325 | 9962 | 46.4 |
+| 0.75 | 22.3 | 77.0 | 50.4 | 39.1 | 32.7 | 46.9 | 139 | 6747 | 10921 | 53.5 |
+| 0.85 | **23.6** | **78.1** | 41.5 | 32.7 | 27.5 | 39.1 | **91** | 3503 | 13929 | **61.7** |
+
+**Its best point loses to both neighbours.** Peak MOTA 23.6 (conf 0.85, with
+HOTA collapsed to 32.7) or 22.3 at conf 0.75 — either way under yolo11n's 25.3
+and far under yolo11m's 28.7. Peak HOTA 39.2 vs yolo11m's 41.5. Not
+competitive on any metric; **drop it and keep yolo11m**.
+
+**The peak epoch is monotonic in capacity**: yolo11n epoch 7, yolo11s epoch 3,
+yolo11m epoch 1. So going *smaller* did not fix the early-peak problem — 8,472
+correlated video frames overfit fast at any size above nano. More usefully:
+**peaking early does not mean the checkpoint is bad.** yolo11m peaks earliest
+and still wins end-to-end by a clear margin. That makes the low-LR retrain
+more interesting, not less — if yolo11m can be made to train productively past
+epoch 1, it should go beyond 28.7.
+
+### LOW-LR RETRAIN — the big win (2026-08-07)
+
+`uavdt_only_m_lowlr`: yolo11m, `--optimizer MuSGD --lr0 0.0025 --momentum 0.9
+--warmup-bias-lr 0.0`, otherwise identical to `uavdt_only_m`. Peaked at epoch
+2 (vs epoch 1) and early-stopped at 22.
+
+Detector quality — **best on every measure, and the recall regression is gone**:
+
+| run | best ep | mAP50 | mAP50-95 | P | R |
+|---|---:|---:|---:|---:|---:|
+| `uavdt_only` (n) | 7 | 0.673 | 0.367 | 0.647 | 0.658 |
+| `uavdt_only_s` | 3 | 0.631 | 0.378 | 0.683 | 0.560 |
+| `uavdt_only_m` | 1 | 0.701 | 0.411 | 0.716 | 0.614 |
+| **`uavdt_only_m_lowlr`** | 2 | **0.757** | **0.462** | **0.760** | **0.660** |
+
+The LR was the right lever. It did not stop the early peak (epoch 2 vs 1) but
+it stopped the *collapse* after it: mAP50-95 holds 0.38-0.46 through 12 epochs
+where the default-LR run fell to 0.30-0.36.
+
+**End-to-end** (tau=3, FELNet `rebalanced`, appearance, ignore regions):
+
+| Detector / conf | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `uavdt_only` (n) @ 0.55 | 25.3 | 76.2 | 51.7 | 38.7 | 33.7 | 44.5 | **99** | 7069 | 9964 | 55.9 |
+| `uavdt_only_m` @ 0.75 | 28.7 | 77.0 | 55.0 | 41.5 | 35.2 | 49.0 | 132 | 6232 | 9978 | 51.9 |
+| `..._m_lowlr` @ 0.55 | 32.4 | 76.7 | 58.6 | 44.2 | 38.5 | 51.0 | 146 | 6994 | 8353 | 41.4 |
+| **`..._m_lowlr` @ 0.65** | **36.4** | 77.1 | **59.2** | **44.6** | **38.7** | **51.5** | 139 | 5271 | 9167 | 52.1 |
+| `..._m_lowlr` @ 0.75 | 32.3 | 78.4 | 53.3 | 40.9 | 34.2 | 49.2 | 112 | 3796 | 11616 | 52.7 |
+| `..._m_lowlr` @ 0.85 | 3.2 | 80.9 | 8.7 | 11.7 | 5.2 | 26.7 | 22 | 662 | 21504 | 95.8 |
+
+**+11.1 MOTA, +7.5 IDF1, +5.9 HOTA, +5.0 DetA, +7.0 AssA over the yolo11n
+baseline.** Only ID switches regress (139 vs 99).
+
+Two things worth noting:
+
+1. **The optimum moved back DOWN to conf 0.65**, from the default-LR model's
+   0.75. A properly-trained model is better calibrated and needs less
+   threshold compensation. And at the paper's **unmodified conf 0.55** it
+   still scores MOTA 32.4 / HOTA 44.2 — comfortably above every previous
+   config — so the headline result no longer depends on a threshold deviation.
+2. **M1101 is finally positive.** Per-sequence MOTA on the project's
+   pathological sequence: -11.5 (nano) -> -0.6 (m) -> **+11.8** (m_lowlr).
+   M0203 also rises 48.0 -> 68.6. M0401 sits at 37.7, still just under nano's
+   40.9 — it stays the FN-dominated hard case.
+
+### VisDrone `retrain_aug_m` (2026-08-07) — wins, but only under IoU-only
+
+yolo11m on the combined set, `optimizer: auto` left alone so it matches
+`retrain_aug` exactly. Peaked at epoch **17** (vs UAVDT's 1-2) and ran 37
+epochs / 8.0 h — consistent with 3x the data and a harder 4-class task.
+
+Detector: mAP50 0.587 vs 0.498, mAP50-95 **0.373 vs 0.298 (+25% relative)**,
+recall 0.561 vs 0.478. Much the largest mAP gain in the project.
+
+**Under the faithful appearance config, almost none of it survived:**
+
+| detector / conf (appearance) | MOTA | IDF1 | HOTA | DetA | AssA | IDs |
+|---|---:|---:|---:|---:|---:|---:|
+| `retrain_aug` (n) @ 0.55 | 39.9 | **48.7** | **40.1** | 39.3 | **41.5** | **1126** |
+| `retrain_aug_m` @ 0.55 | **42.1** | 46.4 | 38.8 | **41.9** | 36.4 | 1446 |
+| `retrain_aug_m` @ 0.65 | 41.1 | 47.7 | 39.6 | 40.3 | 39.3 | 1185 |
+| `retrain_aug_m` @ 0.75 | 38.3 | 46.0 | 38.0 | 37.4 | 39.1 | 997 |
+
+DetA +2.6 and 3,200 fewer misses, but AssA **-5.1**, IDs +320, HOTA negative
+at every threshold. The extra detections buy detection quality and spend it
+on association errors.
+
+**Under IoU-only — VisDrone's actually-best association — it wins outright:**
+
+| detector / conf (IoU-only) | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `retrain_aug` (n) @ 0.55 | 40.5 | 77.4 | 51.8 | 42.0 | 39.0 | 45.9 | **656** | 9741 | 31234 |
+| `retrain_aug_m` @ 0.35 | 44.7 | 77.3 | **54.1** | **44.1** | **43.4** | 45.3 | 912 | 12565 | 25265 |
+| **`retrain_aug_m` @ 0.45** | **45.4** | 77.5 | 52.8 | 43.5 | 43.1 | 44.6 | 871 | 10845 | 26503 |
+| `retrain_aug_m` @ 0.55 | 42.8 | 77.7 | 53.0 | 43.3 | 41.4 | **46.0** | 801 | 10966 | 28309 |
+| `retrain_aug_m` @ 0.65 | 41.7 | 77.9 | 51.8 | 42.6 | 40.0 | 45.9 | 714 | 9617 | 30480 |
+
+Best MOTA **45.4 at conf 0.45** (+4.9 over baseline); best HOTA **44.1 at 0.35**
+(+2.1), which is also best IDF1 (54.1) and DetA (43.4). MOTA turns over below
+0.45, so the peak is bracketed. **Recommended primary: conf 0.45** — it wins
+MOTA outright and gives up only 0.6 HOTA to 0.35. Only IDs regress vs baseline
+(871 vs 656).
+
+Note VisDrone's threshold moves **down** (0.45) while UAVDT's moves **up**
+(0.65), from the same paper default of 0.55 and with detectors trained the
+same way. Further evidence that conf is not transferable — not across
+detectors, and not across datasets either.
+
+**The mechanism, and why it matters beyond this run**: swapping association
+turns AssA from **-5.1 to +0.1**. yolo11m's extra detections overwhelm
+FELNet's *appearance* matching but not IoU matching. That is a new, concrete
+mechanism for the project's standing "IoU-only beats our FELNet embeddings"
+finding: the appearance model degrades as detection density rises, so it gets
+*worse* precisely as the detector gets better. Judging a detector upgrade on
+the weaker association mode would have produced the wrong call — the
+appearance table above says "reject yolo11m for VisDrone", the IoU-only table
+says "adopt it".
+
+**Cross-dataset contrast worth reporting**: the same upgrade is +11.1 MOTA /
++5.9 HOTA on UAVDT and +2.3 / +1.3 on VisDrone. UAVDT's gain is concentrated
+in FP-dominated sequences where extra recall is nearly free; VisDrone is dense
+and small-target, already at 656-1,126 ID switches vs UAVDT's ~100, so extra
+detections mostly add association load. **The size of a detector gain is a
+property of the scenes, not of the detector.**
+
+### `train_yolo.py` trap found while setting those up (2026-08-07)
+
+**`--lr0` was a silent no-op as first shipped.** ultralytics' default
+`optimizer='auto'` discards it outright — its own log line reads
+`ignoring 'lr0=...'`. A low-LR run would have trained at auto's 0.01 and been
+indistinguishable from not passing the flag. The script now refuses `--lr0`
+without `--optimizer`. Two related confounds, documented in its docstring:
+`auto` selects by iteration count (`>10000` -> MuSGD, else AdamW), so changing
+`--epochs` alone can switch optimizers; and pinning the optimizer silently
+changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
+0.0), the latter governing exactly the early epochs that matter here.
+
+## GENERAL (single) CONFIGURATION — the deployment target (2026-08-07)
+
+Objective changed: the model must work on arbitrary UAV input, so per-dataset
+tuning is out. That means collapsing **four** per-dataset choices into one —
+detector, FELNet checkpoint, association mode, and conf.
+
+Two were already settled by earlier work: combined training beats per-dataset
+training on detector mAP for *both* datasets (cross-domain diversity is a net
+positive, see 2026-07-26 item 7), and `full_run` + IoU-only is the HOTA leader
+on *both* (see the loss-rebalance table). The open gap was that
+`retrain_aug_m` had never been run on UAVDT.
+
+**`retrain_aug_m` + `full_run` + IoU-only, swept jointly:**
+
+| conf | UAVDT HOTA | VisDrone HOTA | UAVDT MOTA | VisDrone MOTA | UAVDT IDs | VisDrone IDs |
+|---|---:|---:|---:|---:|---:|---:|
+| **0.45** | **43.2** | **43.5** | 19.9 | **45.4** | **67** | 871 |
+| 0.55 | 42.7 | 43.3 | 19.8 | 42.8 | 68 | 801 |
+| 0.65 | 42.4 | 42.6 | 21.7 | 41.7 | 47 | 714 |
+
+**Chosen: conf 0.45.** HOTA 43.2 / 43.5 — within 0.3 across two very different
+datasets, which is the signature of a config not bent toward either. 0.45 also
+maximises the *minimum* of the two, the right criterion for a general model
+rather than the mean.
+
+**Cost of generalising**: UAVDT HOTA 44.6 -> 43.2 (**-1.4**); VisDrone
+**unchanged**, because its per-dataset optimum already *is* this config.
+
+**UAVDT MOTA 36.4 -> 19.9 is a labelling artifact, and it argues for the
+general model rather than against it.** UAVDT FP rises 5,271 -> 10,628: the
+UAVDT-only detector learned which cars UAVDT bothers to label, while the
+combined detector finds cars generally, and the extras score as FP under
+UAVDT's sparse annotation (already diagnosed on M1101 — 44% of raw detections
+there are real-but-unlabelled cars). MOTA punishes FP linearly; HOTA does not.
+On the same runs the general config has **better** association than the
+UAVDT-specific one: IDs 67 vs 139, AssA 51.9 vs 51.5. Detecting more real
+vehicles is what a deployed model should do. **Report HOTA as headline; state
+the UAVDT MOTA caveat explicitly.**
+
+**Declared deviation**: IoU-only departs from the paper, which specifies
+FELNet appearance matching. Justified for a deployment target — it wins on
+both datasets and its margin *grows* as the detector improves — but the
+faithful appearance numbers stay reported alongside.
+
+**Scope honesty**: two daytime, vehicle-only UAV datasets at similar altitudes
+is **not** "every kind of input". Nothing here tests night, weather, varied
+altitude, other classes, or other sensors. The only genuine generalisation
+evidence available in this project is the held-out test split.
 
 ## FINAL HELD-OUT TEST RESULTS (2026-07-28)
 

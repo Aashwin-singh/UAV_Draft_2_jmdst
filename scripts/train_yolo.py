@@ -29,8 +29,45 @@ Usage (YOLOv11m capacity upgrade -- note the mandatory smaller ``--batch``):
 
 Usage (yolo11m with the LR fix -- see "Overfitting at yolo11m scale" below):
     python scripts/train_yolo.py --data data/yolo_uavdt/dataset.yaml --model yolo11m.pt \
-        --epochs 60 --patience 15 --batch 8 --lr0 0.0025 --strong-aug \
-        --name uavdt_only_m_lowlr
+        --epochs 60 --patience 15 --batch 8 --optimizer MuSGD --lr0 0.0025 \
+        --strong-aug --name uavdt_only_m_lowlr
+
+
+``optimizer=auto`` silently discards ``--lr0`` (verified 2026-08-07)
+--------------------------------------------------------------------
+ultralytics' default ``optimizer='auto'`` **ignores lr0 outright** -- its own
+log line reads ``ignoring 'lr0=...'`` (engine/trainer.py). Passing ``--lr0``
+without ``--optimizer`` therefore trains at auto's LR and looks exactly like
+not passing it, so this script now refuses that combination rather than
+burning hours on a no-op.
+
+``auto`` also selects *by iteration count*:
+
+    iterations = ceil(len(dataset) / max(batch, nbs=64)) * epochs
+    iterations > 10000 -> MuSGD, lr 0.01     else -> AdamW, lr 0.00125
+
+Both existing UAVDT runs land at 133 * 150 = 19,950 -> MuSGD, so they are
+directly comparable. But dropping to ``--epochs 60`` gives 7,980, which
+silently switches the optimizer to AdamW -- a confound that has nothing to do
+with the variable under test. **Pin ``--optimizer`` for any run you intend to
+compare against another.**
+
+Pinning the optimizer changes two more things behind your back, because
+``auto`` overrides them and the explicit path does not:
+
+    setting            auto sets   explicit default
+    momentum           0.9         0.937
+    warmup_bias_lr     0.0         0.1
+
+``warmup_bias_lr`` matters here specifically: it governs the first few epochs,
+which is exactly where yolo11m peaks. To change *only* the LR, replicate
+auto's other choices:
+
+    --optimizer MuSGD --lr0 0.0025 --momentum 0.9 --warmup-bias-lr 0.0
+
+Conversely, a run meant to replicate an existing ``optimizer: auto`` run
+(e.g. ``retrain_aug_m`` vs ``retrain_aug``) should pass **none** of these and
+leave auto alone.
 
 
 Overfitting at yolo11m scale (measured 2026-08-06)
@@ -123,15 +160,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Anti-overfit augmentation preset (deviates from paper defaults). See module docstring.",
     )
     parser.add_argument(
+        "--optimizer",
+        default=None,
+        choices=["SGD", "MuSGD", "Adam", "AdamW", "Adamax", "NAdam", "RAdam", "RMSProp"],
+        help=(
+            "Pin the optimizer. REQUIRED alongside --lr0, because ultralytics' default "
+            "'optimizer=auto' explicitly ignores lr0 (trainer.py: \"ignoring 'lr0=...'\"). "
+            "'auto' also picks by iteration count, so it silently switches MuSGD -> AdamW "
+            "when --epochs drops. Pin it for any run you intend to compare."
+        ),
+    )
+    parser.add_argument(
         "--lr0",
         type=float,
         default=None,
         help=(
-            "Override ultralytics' initial LR (its 'auto' optimizer picks 0.01, which warms "
-            "up to ~0.03). Lower this for high-capacity variants: yolo11m peaked at epoch 1 "
-            "on data/yolo_uavdt at the default, i.e. it degraded COCO-pretrained features "
+            "Initial LR. Needs --optimizer (see above) or it is silently discarded. "
+            "Lower this for high-capacity variants: yolo11m peaked at epoch 1 on "
+            "data/yolo_uavdt at auto's 0.01, i.e. it degraded COCO-pretrained features "
             "faster than it learned dataset-specific ones. Try 0.002-0.003."
         ),
+    )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=None,
+        help="Optimizer momentum. Pass 0.9 with --optimizer to match what 'auto' would set (its default is 0.937).",
+    )
+    parser.add_argument(
+        "--warmup-bias-lr",
+        type=float,
+        default=None,
+        help="Warmup LR for bias params. Pass 0.0 with --optimizer to match 'auto' (its default is 0.1).",
     )
     parser.add_argument(
         "--freeze",
@@ -165,14 +225,29 @@ STRONG_AUG = {
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    # Fail loudly rather than train for hours at a silently-discarded LR.
+    if args.lr0 is not None and args.optimizer is None:
+        parser.error(
+            "--lr0 requires --optimizer. ultralytics' default 'optimizer=auto' ignores "
+            "lr0 outright, so the run would use auto's own LR and the result would be "
+            "indistinguishable from not passing --lr0 at all. Both existing UAVDT runs "
+            "resolved to MuSGD, so --optimizer MuSGD keeps the comparison single-variable."
+        )
     model = YOLO(args.model)
     # Copy, so adding lr0/freeze below never mutates the module-level constant.
     extra = dict(STRONG_AUG) if args.strong_aug else {}
     # Only forward these when set, so an unspecified flag leaves ultralytics'
     # own default in place rather than overriding it with None.
+    if args.optimizer is not None:
+        extra["optimizer"] = args.optimizer
     if args.lr0 is not None:
         extra["lr0"] = args.lr0
+    if args.momentum is not None:
+        extra["momentum"] = args.momentum
+    if args.warmup_bias_lr is not None:
+        extra["warmup_bias_lr"] = args.warmup_bias_lr
     if args.freeze is not None:
         extra["freeze"] = args.freeze
     model.train(
