@@ -157,20 +157,30 @@ held-out test numbers.
 **One** setting for all inputs — the deployment target, since the model must
 handle arbitrary UAV footage rather than a specific benchmark:
 
-| Detector | FELNet | Association | conf |
-|---|---|---|---|
-| `retrain_aug_m` (combined yolo11m) | `full_run` (`overlap_scale=1`) | IoU-only | **0.45** |
+| Detector | FELNet | Association | conf | tau |
+|---|---|---|---|---|
+| `retrain_aug_m_lowlr` (combined yolo11m, low LR) | `full_run` (`overlap_scale=1`) | IoU-only | **0.55** | 3 |
 
-| | UAVDT val | VisDrone val |
-|---|---:|---:|
-| HOTA | **43.2** | **43.5** |
-| IDF1 | 57.4 | 52.8 |
-| MOTA | 19.9\* | 45.4 |
-| IDs | 67 | 871 |
+| | UAVDT val | VisDrone val | **UAVDT test** | **VisDrone test** |
+|---|---:|---:|---:|---:|
+| HOTA | 44.3 | 45.4 | **45.0** | **44.5** |
+| IDF1 | 58.8 | 56.1 | 57.1 | 52.8 |
+| AssA | 53.2 | 47.3 | 43.8 | 53.9 |
+| DetA | 37.0 | 44.2 | 46.4 | 37.1 |
+| MOTA | 21.8\* | 46.6 | 51.8 | 38.2 |
+| IDs | 74 | 849 | 767 | 583 |
+| FPS | 45.2 | 19.0 | 30.3 | 15.6 |
 
-HOTA lands within 0.3 of itself across two very different datasets, and conf
-0.45 maximises the *worse* of the two — the right criterion for a general
-model, rather than the average.
+Held-out test confirms val: HOTA 45.0 / 44.5. Against the published paper,
+VisDrone is within **0.9 DetA / 1.9 HOTA**; UAVDT trails by 15.1 HOTA, and on
+test that shortfall is **association-dominated** (AssA -17.5 vs DetA -12.6),
+which is what CMC / NSA-Kalman target.
+
+conf 0.55 maximises the *worse* of the two HOTAs (the right criterion for a
+general model, rather than the average), is VisDrone's outright optimum, and
+sits 0.6 below UAVDT's own peak. **It is also the paper's unmodified value**,
+so this configuration carries no threshold deviation — unlike every
+per-dataset config that preceded it.
 
 \* **UAVDT MOTA is deflated by a labelling artifact, not by tracking quality.**
 The combined detector finds cars generally; UAVDT labels only some of them, so
@@ -186,8 +196,10 @@ vs 51.5). **Report HOTA as the headline and state the UAVDT MOTA caveat.**
 | UAVDT | `uavdt_only_m_lowlr` @ conf 0.65 | `rebalanced` (`overlap_scale=64`) | appearance | 44.6 |
 | VisDrone | `retrain_aug_m` @ conf 0.45 | `full_run` | IoU-only | 43.5 |
 
-Generalising costs **1.4 HOTA on UAVDT and nothing on VisDrone** — VisDrone's
-per-dataset optimum *is* the general config.
+**Generalising now costs essentially nothing.** The general config reaches
+HOTA 44.3 on UAVDT (vs the per-dataset 44.6) and 45.4 on VisDrone — *better*
+than VisDrone's own per-dataset optimum, because the low-LR detector landed
+after that config was chosen. One configuration is no longer a compromise.
 
 Checkpoints live under `outputs/` and are **gitignored** — retrain or copy
 them; they do not come with a fresh clone.

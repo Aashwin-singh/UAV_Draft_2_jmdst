@@ -263,6 +263,26 @@ they meet **all** of:
 | Embedding dimension | 16 | FELNet `E` head output |
 | SSI size | 64×64 | fixed |
 
+### Parameters the paper never specifies (our values, chosen not derived)
+
+Be ready to defend these — they are **not** in the paper, so any panel question
+about them is asking about our choice, not the paper's:
+
+| Parameter | Paper | Ours | Where |
+|---|---|---|---|
+| YOLOv11 variant / LR / epochs / aug | *"trained separately using its default parameters"* — that one sentence is the entire spec (Sec. 2.5) | yolo11m, MuSGD, lr0 0.0025, batch 8, 150 ep / patience 20, `--strong-aug` | `scripts/train_yolo.py` |
+| `k_max` (episode frame interval) | symbol only, no value (A.4) | 5 | `train_felnet.py --k-max` |
+| `N_o` (frames per episode) | symbol only | 8 | `--n-o` |
+| `N_s` (SSIs per frame) | symbol only | 8 | `--n-s` |
+| `N_P` / `N_N` (embedding pairs) | symbol only | 128 / 128 | `--num-positive/--num-negative` |
+| `M`, `N_b` (MSFP sequence len / batch) | symbol only (A.5) | n/a — MSFP not implemented | — |
+| `max_cosine_distance` | not given | 0.3, calibrated to FELNet's measured embedding distribution (DeepSORT's stock value is 0.2) | `tracker.py` |
+| FELNet optimizer LR | "Adam + cosine annealing", no value | 1e-3 | `--lr` |
+
+Values that **are** paper-specified and should not be swapped for DeepSORT's
+stock defaults: `N = τ+1 = 4` (DeepSORT uses `n_init=3`) and the 100-miss
+deletion (DeepSORT uses `max_age=30`). Both come from A.6/A.8.
+
 ## A.9 Datasets, splits, and metrics
 
 - **VisDrone2019 MOT**: classes {car, van, truck, bus} only. Split: 45 train /

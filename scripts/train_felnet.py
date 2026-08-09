@@ -12,6 +12,40 @@ Smoke test / timing (few steps, prints ms/step):
 
 Full run:
     python scripts/train_felnet.py --epochs 50 --steps-per-epoch 500 --name full_run
+
+
+Rebalancing the loss (L = l1*L_E + l2*L_o + l3*L_C, paper Eq. 7)
+----------------------------------------------------------------
+The paper sets l1=l2=l3=1.0, but the three terms are not on comparable scales:
+with pixel-space overlap targets L_o ~= 27 while L_E ~= 0.9 (a bounded
+correlation), so the embedding branch gets little gradient on the shared
+backbone. That was diagnosed in Phase 4 and confirmed by the Phase 11
+appearance ablation.
+
+Two levers, and they are **not** equivalent:
+
+* ``--overlap-scale 64`` normalises the overlap *targets* to ~[0,1]. Already
+  run (the ``rebalanced`` checkpoint): L_o 27.6 -> 0.48, embedding separation
+  0.653 -> **0.782 (+20%)**, but localisation IoU 0.634 -> 0.610. Helped UAVDT,
+  hurt VisDrone. Changes what the overlap head predicts, so **every inference
+  path must multiply the output back to pixels** (see FELNetConfig.overlap_scale
+  and ARCHITECTURE.md invariant 1).
+* ``--lambda-embedding`` reweights the *loss* without touching target scale or
+  the inference contract. Untried as of 2026-08-07.
+
+Whichever you change, expect the embedding/localisation trade to be real: the
+overlap-scale run bought embedding quality at localisation's expense, and
+under IoU-only association it is localisation that ships.
+
+**Checkpoint selection caveat**: ``best.pt`` is chosen by lowest *training*
+total loss, and that total is lambda-weighted. Raising l1 therefore changes
+the selection criterion as well as the gradients, and a large l1 makes it
+track embedding fit on train data specifically. Confirm any win with
+``scripts/eval_felnet.py`` on the held-out val split rather than trusting the
+training curve.
+
+    python scripts/train_felnet.py --epochs 50 --steps-per-epoch 500 \\
+        --lambda-embedding 10 --name lambda_e10
 """
 
 from __future__ import annotations
@@ -61,6 +95,18 @@ def build_parser() -> argparse.ArgumentParser:
             "weights. 1.0 = original pixel-space behaviour."
         ),
     )
+    parser.add_argument(
+        "--lambda-embedding",
+        type=float,
+        default=1.0,
+        help=(
+            "lambda1 in L = l1*L_E + l2*L_o + l3*L_C (paper Eq. 7; paper value 1.0). "
+            "Raise to give the embedding branch more gradient on the shared backbone. "
+            "See 'Rebalancing the loss' in the module docstring before changing."
+        ),
+    )
+    parser.add_argument("--lambda-overlap", type=float, default=1.0, help="lambda2, the overlap/localization term (paper 1.0).")
+    parser.add_argument("--lambda-confidence", type=float, default=1.0, help="lambda3, the confidence term (paper 1.0).")
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -106,7 +152,13 @@ def main() -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     total_steps = args.epochs * args.steps_per_epoch
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
-    criterion = FELNetLoss(num_positive=args.num_positive, num_negative=args.num_negative)
+    criterion = FELNetLoss(
+        num_positive=args.num_positive,
+        num_negative=args.num_negative,
+        lambda_embedding=args.lambda_embedding,
+        lambda_overlap=args.lambda_overlap,
+        lambda_confidence=args.lambda_confidence,
+    )
 
     save_dir = Path(args.project).resolve() / args.name
     if not args.time_only:

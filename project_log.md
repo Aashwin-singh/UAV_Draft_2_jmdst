@@ -235,6 +235,270 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## FINAL HELD-OUT TEST — general configuration (2026-08-09)
+
+**Supersedes the 2026-07-28 test section below**, which predates the yolo11m +
+low-LR detector. Config was frozen from val before running; nothing was tuned
+on test. Both association modes were run as a pre-registered A/B.
+
+Config: `retrain_aug_m_lowlr` + FELNet `full_run` + conf 0.55 + tau 3.
+
+**UAVDT test** — 8 sequences, ignore regions applied:
+
+| Association | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **IoU-only** | **51.8** | 76.5 | **57.1** | **45.0** | **46.4** | **43.8** | **767** | **22840** | 44140 | **30.3** |
+| Faithful (appearance) | 49.2 | 76.4 | 45.6 | 37.0 | 46.2 | 29.9 | 2488 | 26426 | **42503** | 28.7 |
+
+**VisDrone test** — 10 sequences:
+
+| Association | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **IoU-only** | **38.2** | 77.8 | **52.8** | **44.5** | **37.1** | **53.9** | **583** | **11383** | 40113 | **15.6** |
+| Faithful (appearance) | 36.2 | 77.8 | 48.3 | 41.5 | 36.9 | 47.1 | 1097 | 12988 | **39696** | 15.2 |
+
+### 1. The appearance negative result replicates, and the gap WIDENS on test
+
+UAVDT HOTA **45.0 vs 37.0 (+8.0)**, AssA +13.9, IDs 767 vs 2488 (**-69%**).
+VisDrone HOTA 44.5 vs 41.5 (+3.0), AssA +6.8, IDs 583 vs 1097 (-47%). On val
+the UAVDT gap was +4.3; on unseen data it doubled. Three independent
+confirmations now exist (2026-07-28 test, val, this test), and the mechanism
+is documented (the pinned diff-identity floor). This is a settled finding.
+
+### 2. Large improvement over the previous held-out test
+
+| | old IoU variant (2026-07-28) | new | delta |
+|---|---:|---:|---:|
+| UAVDT MOTA | 43.1 | **51.8** | **+8.7** |
+| UAVDT HOTA | 38.8 | **45.0** | **+6.2** |
+| VisDrone MOTA | 29.0 | **38.2** | **+9.2** |
+| VisDrone HOTA | 39.6 | **44.5** | **+4.9** |
+
+Detector work drove all of it, on genuinely unseen data.
+
+### 3. Against the paper's published numbers — VisDrone is close
+
+| | ours (test) | paper | gap |
+|---|---:|---:|---:|
+| VisDrone DetA | 37.1 | 38.0 | **-0.9** |
+| VisDrone HOTA | 44.5 | 46.4 | **-1.9** |
+| VisDrone AssA | 53.9 | 56.9 | -3.0 |
+| VisDrone MOTA | 38.2 | 44.9 | -6.7 |
+| VisDrone IDF1 | 52.8 | 62.4 | -9.6 |
+| UAVDT DetA | 46.4 | 59.0 | -12.6 |
+| UAVDT HOTA | 45.0 | 60.1 | -15.1 |
+| UAVDT AssA | 43.8 | 61.3 | -17.5 |
+
+**VisDrone detection accuracy is within 0.9 DetA and 1.9 HOTA of the published
+paper** on held-out data, with different splits. That is a credible
+reproduction on that dataset.
+
+**Diagnosis update for UAVDT — association is now the larger gap, not
+detection.** On val the UAVDT shortfall looked detection-driven (DetA -22).
+On test DetA recovered to 46.4 (gap -12.6) while AssA sits at -17.5. IDs are
+767 against the paper's 170, and one sequence (M0603) contributes 327 of them
+alongside 8,836 FP. **This makes CMC and NSA-Kalman the right next work** —
+they target association and motion, which is where the remaining UAVDT gap
+actually is.
+
+### 4. Speed — honest regression on VisDrone
+
+UAVDT **30.3 FPS** still beats the paper's 26.6. VisDrone **15.6 FPS is now
+below** the paper's 18.6, and below our own earlier 18.3-20.9 — yolo11m costs
+more than yolo11n. This is a real trade: we bought +4.9 HOTA for ~3 FPS.
+Report it as a trade, not a win.
+
+### 5. Per-sequence spread (IoU-only) — quote this with any single number
+
+| UAVDT test | MOTA | | VisDrone test | MOTA |
+|---|---:|---|---|---:|
+| M0101 | **78.3** | | uav0000308_00000_v | **69.7** |
+| M0703 | 69.4 | | uav0000316_01288_v | 57.0 |
+| M0603 | 67.8 | | uav0000306_00230_v | 55.5 |
+| M1301 | 49.5 | | uav0000119_02301_v | 49.0 |
+| M1006 | 40.3 | | uav0000124_00944_v | 41.4 |
+| M1004 | 14.6 | | uav0000315_00000_v | 41.1 |
+| M1009 | 13.6 | | uav0000281_00460_v | 21.1 |
+| M0210 | 10.2 | | uav0000370_00001_v | 16.6 |
+| | | | uav0000263_03289_v | 2.2 |
+| | | | uav0000073_00600_v | 0.0\* |
+
+\* 13 GT objects in the entire sequence — meaningless at that scale.
+
+Spread remains large (78.3 to 10.2 on UAVDT). Every headline number here
+should be quoted with this table.
+
+Artifacts: `outputs/test_general_{iou,app}/{uavdt,visdrone}.{md,json}`.
+
+## PAPER'S OWN NUMBERS — now available (2026-08-09)
+
+**Supersedes the standing note that the paper's UAVDT/VisDrone tables "are images
+in the PDF and their values were never extracted."** They were recovered by
+rasterising the pages (external research pass, see
+`Desktop/Capstone/Results/JMDST_RESEARCH_FINDINGS.md`). Accuracy comparison to
+the paper is now possible where it previously was not.
+
+Paper Table 5 — **UAVDT** (their split, 23-of-50 sequences, 12/3/8):
+
+| Method | MOTA | MOTP | IDs | IDF1 | HOTA | DetA | AssA | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| DeepSORT | 31.4 | 75.6 | 200 | 48.3 | 38.4 | 31.3 | 47.7 | 15.8 |
+| ByteTrack | 32.0 | 74.9 | 165 | 49.8 | 39.2 | 31.6 | 49.2 | 22.9 |
+| QDTrack | **69.7** | **81.5** | 179 | **76.5** | **62.9** | **59.2** | **67.0** | 13.0 |
+| **JMDST (paper)** | 67.3 | 81.2 | 170 | 73.5 | 60.1 | 59.0 | 61.3 | **26.6** |
+
+Paper Table 6 — **VisDrone2019**:
+
+| Method | MOTA | MOTP | IDs | IDF1 | HOTA | DetA | AssA | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| DeepSORT | 36.3 | 75.8 | 905 | 47.9 | 38.7 | 34.3 | 44.3 | 12.2 |
+| ByteTrack | 39.0 | 75.6 | 457 | 53.6 | 41.5 | 34.9 | 50.2 | 16.9 |
+| QDTrack | **49.5** | 77.2 | **161** | **66.0** | **49.0** | **41.0** | **58.9** | 11.3 |
+| **JMDST (paper)** | 44.9 | 76.5 | 178 | 62.4 | 46.4 | 38.0 | 56.9 | 18.6 |
+
+### Where we actually stand (current general config, val)
+
+| | UAVDT HOTA | VisDrone HOTA |
+|---|---:|---:|
+| Ours (general config, **val**) | 44.3 | **45.4** |
+| Paper's JMDST | 60.1 | 46.4 |
+| Gap | **-15.8** | **-1.0** |
+
+**VisDrone is now within 1.0 HOTA of the paper.** That is a much smaller gap
+than any earlier comparison suggested — the old "final test" figures (VisDrone
+HOTA 36.3) predate the yolo11m + low-LR detector, so any table using them
+understates the current system by ~9 HOTA. Re-running test is what makes this
+claim quotable; until then it is val-vs-published and must be labelled as such.
+
+**UAVDT remains far behind, and it is a detection gap, not a tracking gap**:
+paper DetA **59.0** vs ours **37.0**, with AssA much closer (61.3 vs 53.2).
+Their detector finds far more of the ground truth than ours does. Note this is
+partly protocol — our UAVDT numbers apply ignore-region filtering and suffer
+the sparse-annotation FP artifact, and the splits differ (the paper never
+published its sequence lists) — but a 22-point DetA gap is too large to be
+explained by split variance alone.
+
+**Corroboration worth citing**: the paper's own Sec. 3.4.4 ablation swaps
+YOLOv11 -> YOLOX and loses 8.6% MOTA / 19.3% HOTA. Our "detector quality is the
+dominant lever" finding is not just true in this codebase — the source paper
+measured the same thing.
+
+## FINAL GENERAL CONFIGURATION (2026-08-09)
+
+**`retrain_aug_m_lowlr` + FELNet `full_run` + IoU-only + conf 0.55, tau 3.**
+
+| | UAVDT val | VisDrone val |
+|---|---:|---:|
+| HOTA | **44.3** | **45.4** |
+| IDF1 | 58.8 | 56.1 |
+| AssA | 53.2 | 47.3 |
+| DetA | 37.0 | 44.2 |
+| MOTA | 21.8\* | 46.6 |
+| IDs | 74 | 849 |
+| FPS | 45.2 | 19.0 |
+
+\* UAVDT MOTA is deflated by the sparse-annotation artifact (see the
+2026-08-07 section) — a stronger detector finds more unlabelled cars, each
+scored as FP. HOTA is the honest headline.
+
+**Conf sweep** (all IoU-only, new detector). Selection criterion is the
+**worse** of the two HOTAs, not the mean — the right objective for a model
+that must work on arbitrary input:
+
+| conf | UAVDT HOTA | VisDrone HOTA | worst-case | UAVDT MOTA | VisDrone MOTA | UAVDT IDs | VisDrone IDs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0.35 | 43.4 | 44.4 | 43.4 | 10.8 | 43.1 | 112 | 1152 |
+| 0.45 | 43.2 | 44.6 | 43.2 | 15.9 | 45.6 | 96 | 1037 |
+| **0.55** | 44.3 | **45.4** | **44.3** | 21.8 | **46.6** | 74 | 849 |
+| 0.65 | **44.9** | 43.7 | 43.7 | **28.3** | 45.5 | **62** | 724 |
+
+**conf 0.55 is the paper's own unmodified value**, so the final configuration
+carries **no threshold deviation** — unlike every per-dataset config that
+preceded it. Worth stating plainly in the writeup: the earlier 0.65/0.45
+divergence was an artifact of weaker, differently-calibrated detectors.
+
+Improvement over the 2026-08-07 general config on **both** datasets:
+UAVDT HOTA 43.2 -> 44.3, IDF1 57.4 -> 58.8; VisDrone HOTA 43.5 -> 45.4,
+IDF1 52.8 -> 56.1. Generalising now costs essentially nothing: 44.3 vs the
+UAVDT per-dataset optimum's 44.6, and VisDrone's number *beats* its own
+former per-dataset best.
+
+### Step 4 — appearance matching cannot be rescued (2026-08-09)
+
+The decisive test of the lambda1 hypothesis, all at conf 0.45 with the new
+detector:
+
+| FELNet / association | dataset | MOTA | IDF1 | HOTA | AssA | IDs |
+|---|---|---:|---:|---:|---:|---:|
+| `lambda_e30` + appearance | UAVDT | 13.1 | 50.9 | 39.2 | 43.7 | 376 |
+| `full_run` + appearance | UAVDT | 12.3 | 50.3 | 38.9 | 42.1 | 282 |
+| **`full_run` + IoU-only** | UAVDT | **15.9** | **57.0** | **43.2** | **51.2** | **96** |
+| `lambda_e30` + appearance | VisDrone | 40.3 | 47.8 | 39.2 | 36.4 | 2038 |
+| `full_run` + appearance | VisDrone | 40.5 | 46.6 | 39.6 | 36.3 | 2041 |
+| **`full_run` + IoU-only** | VisDrone | **45.6** | **54.4** | **44.6** | **45.1** | **1037** |
+
+**A 20% better embedding bought nothing.** `lambda_e30` has embedding
+separation 0.784 vs `full_run`'s 0.653, and end-to-end that is worth HOTA
++0.3 on UAVDT and **-0.4** on VisDrone, AssA +1.6 and +0.1. On UAVDT it
+produced *more* ID switches (376 vs 282), not fewer.
+
+Combined with the pinned diff-identity floor from the lambda sweep below, the
+conclusion is well supported: **the ceiling is not embedding quality, it is
+that these targets are not visually separable enough for appearance matching
+to help at all.** Tighter same-identity clusters do not help when different
+identities sit at ~0.11 similarity regardless; a tighter threshold then admits
+more false matches, which is exactly the UAVDT ID-switch increase.
+
+**The density prediction held.** IoU-only's HOTA margin over appearance is now
+**+4.3 / +5.0**, wider than the +4.7 measured on VisDrone with the weaker
+detector, and VisDrone appearance ID switches rose to ~2,040 from ~1,446.
+Appearance matching does degrade as the detector improves.
+
+For the writeup this is the strongest form of the negative result: the paper's
+own prescribed remedy (rebalance the loss so the embedding branch gets
+gradient) was implemented, achieved its intended effect on the component
+metric, and did not transfer end-to-end — with a mechanism explaining why.
+
+## FELNet lambda1 sweep (2026-08-09) — NEGATIVE: lambda1 is a *worse* lever than overlap-scale
+
+Tested the one untried option from the Phase-11 diagnosis: raise lambda1 (the
+embedding weight in `L = l1*L_E + l2*L_o + l3*L_C`) instead of normalising the
+overlap targets. Added `--lambda-embedding/--lambda-overlap/--lambda-confidence`
+to `scripts/train_felnet.py` (they were not reachable before). Two 50-epoch
+runs at lambda1 = 30 and 100, `--overlap-scale 1` so overlap targets stay in
+pixel space.
+
+Held-out val, via `scripts/eval_felnet.py`:
+
+| checkpoint | lever | loc IoU | separation | conf acc |
+|---|---|---:|---:|---:|
+| `full_run` | none (paper l=1,1,1) | **0.634** | 0.653 | **0.843** |
+| `rebalanced` | `--overlap-scale 64` | 0.610 | 0.782 | 0.835 |
+| `lambda_e30` | `--lambda-embedding 30` | 0.593 | 0.784 | 0.825 |
+| `lambda_e100` | `--lambda-embedding 100` | 0.522 | **0.789** | 0.753 |
+
+**Three conclusions:**
+
+1. **lambda1 buys the same embedding gain at a higher localisation price.**
+   `rebalanced` reaches separation 0.782 at IoU 0.610; `lambda_e30` reaches
+   0.784 (+0.003) at IoU 0.593 (-0.017). Strictly dominated. The pre-registered
+   win condition — separation >= 0.78 *without* IoU dropping below 0.610 — is
+   met by neither run.
+2. **Embedding separation saturates; localisation does not.** lambda1 30 -> 100
+   moved separation +0.005 and IoU **-0.071**, with confidence accuracy also
+   falling 0.825 -> 0.753. Past ~0.78 the trade is close to pure loss.
+3. **The binding constraint is not the loss weighting.** Same-identity
+   similarity is already 0.90-0.92, but different-identity similarity sits at
+   0.105-0.126 no matter what lambda1 is. Nothing in the loss balance moves the
+   diff-identity floor, which is what association actually needs. That points at
+   the 16-D embedding's capacity, or at the task (near-identical small vehicles
+   from above), rather than at a hyperparameter.
+
+**Practical upshot**: keep `full_run` for any IoU-only configuration — it has
+the best localisation (0.634), and localisation is the only FELNet output that
+IoU-only association consumes. Both rebalance levers are now explored and
+neither produces a general win.
+
 ## GENERAL (single) CONFIGURATION — the deployment target (2026-08-07)
 
 Objective changed: the model must work on arbitrary UAV input, so per-dataset
@@ -284,7 +548,10 @@ is **not** "every kind of input". Nothing here tests night, weather, varied
 altitude, other classes, or other sensors. The only genuine generalisation
 evidence available in this project is the held-out test split.
 
-## FINAL HELD-OUT TEST RESULTS (2026-07-28)
+## SUPERSEDED — held-out test results (2026-07-28)
+
+**Kept for history. These predate the yolo11m + low-LR detector; see the
+2026-08-09 test section above for the current numbers.**
 
 Configs were fixed from val results **before** running test (detector, FELNet
 version, tau=3, conf 0.55, mcd 0.3 — all val-selected; see the sections
