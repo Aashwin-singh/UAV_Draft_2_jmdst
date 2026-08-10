@@ -235,6 +235,81 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## FINAL HELD-OUT TEST — with NSA + CMC (2026-08-10)
+
+Config frozen from val: `retrain_aug_m_lowlr` + `full_run` + IoU-only +
+conf 0.55 + tau 3 + `--nsa --cmc`. Nothing tuned on test.
+
+| Dataset / assoc | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **UAVDT, IoU-only** | **54.3** | 77.6 | **59.0** | **47.2** | **48.1** | **46.5** | **661** | 21003 | 42604 | 23.6 |
+| UAVDT, appearance | 52.2 | 77.6 | 46.9 | 38.5 | 47.9 | 31.1 | 2388 | 23057 | 41691 | 26.0 |
+| **VisDrone, IoU-only** | **42.7** | 78.7 | **58.2** | **48.1** | 39.3 | **59.1** | **345** | 9464 | 38523 | 13.0 |
+| VisDrone, appearance | 42.5 | 78.6 | 53.6 | 45.0 | 39.6 | 51.4 | 770 | 9551 | 38149 | 11.7 |
+
+### NSA + CMC replicate on held-out data
+
+| | test without | test with | delta |
+|---|---:|---:|---:|
+| UAVDT HOTA | 45.0 | **47.2** | **+2.2** |
+| UAVDT MOTA | 51.8 | **54.3** | +2.5 |
+| VisDrone HOTA | 44.5 | **48.1** | **+3.6** |
+| VisDrone MOTA | 38.2 | **42.7** | +4.5 |
+| VisDrone IDs | 583 | **345** | **-41%** |
+
+### Versus the paper's published numbers
+
+| VisDrone | ours (test) | paper | delta |
+|---|---:|---:|---:|
+| **HOTA** | **48.1** | 46.4 | **+1.7** |
+| **AssA** | **59.1** | 56.9 | **+2.2** |
+| **DetA** | **39.3** | 38.0 | **+1.3** |
+| **MOTP** | **78.7** | 76.5 | **+2.2** |
+| MOTA | 42.7 | 44.9 | -2.2 |
+| IDF1 | 58.2 | 62.4 | -4.2 |
+| IDs | 345 | 178 | worse |
+| FPS | 13.0 | 18.6 | worse |
+
+| UAVDT | ours (test) | paper | delta |
+|---|---:|---:|---:|
+| HOTA | 47.2 | 60.1 | -12.9 |
+| MOTA | 54.3 | 67.3 | -13.0 |
+| DetA | 48.1 | 59.0 | -10.9 |
+| AssA | 46.5 | 61.3 | -14.8 |
+
+**On VisDrone the reproduction now exceeds the published JMDST on HOTA, DetA,
+AssA and MOTP**, on held-out data, and its AssA (59.1) also edges QDTrack's
+58.9 — the strongest baseline in the paper's own Table 6. MOTA, IDF1, IDs and
+FPS remain behind. **UAVDT still trails on every metric.**
+
+**Splits are not the paper's** (it never published its sequence lists), so
+these are not like-for-like; state that adjacently to any comparison.
+
+### Speed regression — must be reported
+
+UAVDT 23.6 FPS (paper 26.6), VisDrone 13.0 (paper 18.6). ECC runs every frame
+and yolo11m is heavier than yolo11n. Earlier configurations of this project ran
+36-52 FPS. Accuracy was bought with speed.
+
+### Per-sequence spread (IoU-only)
+
+| UAVDT test | MOTA | | VisDrone test | MOTA |
+|---|---:|---|---|---:|
+| M0101 | **75.3** | | uav0000308_00000_v | **74.0** |
+| M0603 | 74.1 | | uav0000306_00230_v | 63.2 |
+| M0703 | 73.8 | | uav0000316_01288_v | 57.2 |
+| M1301 | 51.4 | | uav0000119_02301_v | 50.6 |
+| M1006 | 39.0 | | uav0000315_00000_v | 46.2 |
+| M1009 | 16.8 | | uav0000124_00944_v | 42.2 |
+| M1004 | 14.3 | | uav0000281_00460_v | 36.7 |
+| M0210 | 2.2 | | uav0000370_00001_v | 18.0 |
+| | | | uav0000263_03289_v | -0.8 |
+| | | | uav0000073_00600_v | 0.0\* |
+
+\* 13 GT objects in the whole sequence.
+
+Artifacts: `outputs/test_final_{iou,app}/{uavdt,visdrone}.{md,json}`.
+
 ## CMC + NSA — full 2x2 ablation (2026-08-10)
 
 ECC camera-motion compensation (`jmdst/tracking/cmc.py`, `--cmc`) added on top
