@@ -64,6 +64,40 @@ python scripts/verify_converted_dataset.py `
   --json-path outputs/dataset_verification_report.json
 ```
 
+## Live demo
+
+`scripts/demo.py` runs the tracker on ordinary video and renders the result —
+coloured boxes with persistent track IDs, plus an overlay showing which branch
+is active on each frame (the paper's core idea made visible: full detection
+only every τ-th frame).
+
+Write an annotated video:
+
+```powershell
+python scripts/demo.py --source clip.mp4 --output outputs/demo/clip_tracked.mp4
+```
+
+Live window (press `q` to quit):
+
+```powershell
+python scripts/demo.py --source data/unified/uavdt/test/M0101 --show
+```
+
+`--source` accepts a video file, a directory of frames, or a unified sequence
+directory. Defaults are the project's final configuration (see
+`RESULTS_SUMMARY.md`); `--appearance`, `--no-nsa`, `--no-cmc` switch the
+ablations back on/off.
+
+Requires the trained checkpoints, which are gitignored:
+`outputs/yolo_runs/retrain_aug_m_lowlr/weights/best.pt` (~40 MB) and
+`outputs/felnet_runs/full_run/best.pt` (~17 MB). The script fails with a clear
+message if they are missing. **Datasets are not needed** — only the two
+checkpoints and some footage.
+
+Expect no boxes for the first few frames of any clip: a tracklet is only
+emitted once confirmed, which needs N = τ+1 = 4 consecutive present frames.
+That is the paper's rule (A.6), not a defect.
+
 ## Implemented So Far
 
 - VisDrone2019-MOT converter.

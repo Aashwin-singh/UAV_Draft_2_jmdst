@@ -139,7 +139,13 @@ python scripts/run_jmdst.py --yolo <w> --felnet <c> --datasets uavdt --split val
 python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val
 python scripts/run_ablations.py --datasets uavdt --split val
 python scripts/make_presentation_figures.py && python scripts/build_report.py
+python scripts/demo.py --source <video|frames|seq-dir> --output out.mp4   # live demo
 ```
+
+`scripts/demo.py` is the presentation path: video/frame in, rendered boxes and
+track IDs out. It drives the library through `build_jmdst` + `process_frame`
+rather than `run_jmdst.py`, so it cannot affect measured results. Rendering
+lives in `scripts/` on purpose — presentation, not pipeline.
 
 Tests import each other by bare module name, so they only work via
 `discover`. Long jobs (YOLO/FELNet training, full-split runs) are historically
