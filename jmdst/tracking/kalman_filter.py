@@ -34,6 +34,11 @@ def xyah_to_xywh(xyah: np.ndarray) -> np.ndarray:
     return np.array([cx - w / 2.0, cy - h / 2.0, w, h], dtype=np.float64)
 
 
+# Lower bound on the NSA (1 - confidence) noise multiplier. Numerical guard
+# only -- see KalmanFilter.project.
+NSA_MIN_SCALE = 1e-3
+
+
 class KalmanFilter:
     """Constant-velocity Kalman filter over [cx, cy, a, h] boxes.
 
@@ -98,8 +103,21 @@ class KalmanFilter:
         covariance = self._motion_mat @ covariance @ self._motion_mat.T + motion_cov
         return mean, covariance
 
-    def project(self, mean: np.ndarray, covariance: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Project the state distribution into measurement space."""
+    def project(
+        self, mean: np.ndarray, covariance: np.ndarray, confidence: float | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Project the state distribution into measurement space.
+
+        ``confidence`` enables the **NSA** (noise scale adaptive) measurement
+        noise of StrongSORT (Du et al., IEEE TMM 2023, paper ref [39]):
+
+            R_hat = (1 - c) * R
+
+        so a high-confidence detection is trusted more and pulls the state
+        harder. Pass ``None`` (the default) for the standard DeepSORT filter,
+        which is what the paper specifies -- the paper gives no Kalman
+        internals at all, so this is an opt-in improvement, not a correction.
+        """
 
         std = [
             self._std_weight_position * mean[3],
@@ -108,17 +126,29 @@ class KalmanFilter:
             self._std_weight_position * mean[3],
         ]
         innovation_cov = np.diag(np.square(std))
+        if confidence is not None:
+            # Floor the multiplier purely for numerical safety: at c -> 1 the
+            # published formula sends R -> 0, and while H P H^T keeps the sum
+            # positive definite, a hard zero makes the Cholesky fragile.
+            innovation_cov = innovation_cov * max(1.0 - float(confidence), NSA_MIN_SCALE)
 
         mean = self._update_mat @ mean
         covariance = self._update_mat @ covariance @ self._update_mat.T
         return mean, covariance + innovation_cov
 
     def update(
-        self, mean: np.ndarray, covariance: np.ndarray, measurement: np.ndarray
+        self,
+        mean: np.ndarray,
+        covariance: np.ndarray,
+        measurement: np.ndarray,
+        confidence: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Correct (mean, covariance) with a new measurement (Kalman gain update)."""
+        """Correct (mean, covariance) with a new measurement (Kalman gain update).
 
-        projected_mean, projected_cov = self.project(mean, covariance)
+        ``confidence`` activates NSA measurement noise -- see :meth:`project`.
+        """
+
+        projected_mean, projected_cov = self.project(mean, covariance, confidence)
 
         chol_factor, lower = scipy.linalg.cho_factor(projected_cov, lower=True, check_finite=False)
         kalman_gain = scipy.linalg.cho_solve(

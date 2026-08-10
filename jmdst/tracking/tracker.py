@@ -154,7 +154,13 @@ class Tracker:
         i2: float = 0.1,
         kalman_filter: KalmanFilter | None = None,
         use_appearance: bool = True,
+        use_nsa: bool = False,
     ) -> None:
+        # use_nsa=True scales Kalman measurement noise by (1 - detection
+        # confidence), per StrongSORT's NSA filter. Off by default: the paper
+        # specifies no Kalman internals, so this is an opt-in improvement kept
+        # separable for A/B evaluation.
+        self.use_nsa = use_nsa
         # use_appearance=False disables the embedding-based cascade stage, so
         # association is IoU-only (ablation for the paper's Sec. 3.4.2, which
         # measures FELNet's feature-encoding contribution). FELNet is still
@@ -194,7 +200,12 @@ class Tracker:
         matches, unmatched_tracks, unmatched_dets = self._match(detections)
 
         for ti, di in matches:
-            self.tracks[ti].update(self.kf, detections[di].bbox_xywh, detections[di].embedding)
+            self.tracks[ti].update(
+                self.kf,
+                detections[di].bbox_xywh,
+                detections[di].embedding,
+                detections[di].confidence if self.use_nsa else None,
+            )
         for ti in unmatched_tracks:
             self.tracks[ti].mark_missed()
         for di in unmatched_dets:

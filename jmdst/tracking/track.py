@@ -91,11 +91,23 @@ class Track:
         self.age += 1
         self.time_since_update += 1
 
-    def update(self, kalman_filter: KalmanFilter, bbox_xywh: np.ndarray, embedding: np.ndarray | None = None) -> None:
-        """Correct the track with a matched detection, and progress its state."""
+    def update(
+        self,
+        kalman_filter: KalmanFilter,
+        bbox_xywh: np.ndarray,
+        embedding: np.ndarray | None = None,
+        confidence: float | None = None,
+    ) -> None:
+        """Correct the track with a matched detection, and progress its state.
+
+        ``confidence`` is forwarded to the Kalman update to enable NSA
+        measurement noise; ``None`` keeps the standard DeepSORT behaviour.
+        """
 
         measurement = xywh_to_xyah(np.asarray(bbox_xywh, dtype=np.float64))
-        self.mean, self.covariance = kalman_filter.update(self.mean, self.covariance, measurement)
+        self.mean, self.covariance = kalman_filter.update(
+            self.mean, self.covariance, measurement, confidence
+        )
         self.hits += 1
         self.time_since_update = 0
 

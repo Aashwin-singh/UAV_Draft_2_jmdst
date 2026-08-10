@@ -1,5 +1,6 @@
 """Tracking infrastructure for the JMDST reproduction (Phases 7-8)."""
 
+from .cmc import CameraMotionCompensator
 from .kalman_filter import KalmanFilter, xyah_to_xywh, xywh_to_xyah
 from .matching import iou_xywh
 from .track import Track, TrackState
@@ -13,6 +14,7 @@ from .tracker import (
 )
 
 __all__ = [
+    "CameraMotionCompensator",
     "KalmanFilter",
     "Track",
     "TrackState",

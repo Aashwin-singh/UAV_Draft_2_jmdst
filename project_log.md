@@ -235,6 +235,128 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## CMC + NSA — full 2x2 ablation (2026-08-10)
+
+ECC camera-motion compensation (`jmdst/tracking/cmc.py`, `--cmc`) added on top
+of the NSA work below. All rows: `retrain_aug_m_lowlr` + `full_run` + IoU-only
++ conf 0.55, tau 3, val. NSA = detection-frames-only variant.
+
+**UAVDT val**
+
+| | HOTA | MOTA | IDF1 | DetA | AssA | IDs | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| neither (baseline) | 44.3 | 21.8 | 58.8 | 37.0 | 53.2 | 74 | **45.2** |
+| NSA only | 45.4 | **24.4** | 59.2 | **38.3** | 54.2 | 71 | 41.4 |
+| CMC only | 44.2 | 23.0 | 58.2 | 37.4 | 52.6 | 78 | 38.0 |
+| **NSA + CMC** | **45.7** | 24.2 | **59.9** | **38.3** | **54.9** | **70** | 35.9 |
+
+**VisDrone val**
+
+| | HOTA | MOTA | IDF1 | DetA | AssA | IDs | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| neither (baseline) | 45.4 | 46.6 | 56.1 | 44.2 | 47.3 | 849 | **19.0** |
+| NSA only | 46.6 | 49.8 | 56.6 | 46.3 | 47.6 | 774 | 18.4 |
+| CMC only | 48.3 | 50.8 | 60.6 | 46.5 | 50.8 | 679 | 16.3 |
+| **NSA + CMC** | **51.1** | **54.6** | **63.8** | **48.7** | **54.1** | **560** | 16.5 |
+
+**Three findings:**
+
+1. **The gain is dataset-dependent, and the reason is physical.** CMC is worth
+   +2.9 HOTA alone on VisDrone and **-0.1 on UAVDT**. VisDrone's drone flies
+   actively (translation + rotation between frames); UAVDT is largely hovering
+   surveillance-style footage with little global motion to remove. CMC can only
+   remove motion that is there. This also means the benefit will vary on
+   deployment footage — it is not a fixed +N.
+2. **NSA and CMC are superadditive on VisDrone.** Alone they give +1.2 and
+   +2.9 HOTA; together **+5.7**, i.e. ~+1.6 beyond the sum. Plausible
+   mechanism: CMC makes the Kalman *prediction* correct by removing the
+   coordinate-frame shift, and NSA then sets how hard a good detection pulls
+   the state. Each alone is capped by the other's error — a badly-framed
+   prediction cannot be fixed by reweighting, and a correctly-framed one still
+   under-uses confident detections.
+3. **Enormously larger than StrongSORT's reported CMC gain** (+7.2 IDF1 on
+   VisDrone vs their +0.2 on MOT17, ~36x). Their ablation runs on near-static
+   pedestrian cameras; this is the condition CMC actually exists for. Their
+   figure was a floor, not an expectation.
+
+**Where this puts the reproduction (val, and split-mismatched — see caveats):**
+VisDrone MOTA 54.6 / HOTA 51.1 / DetA 48.7 now **exceeds the paper's published
+JMDST** (44.9 / 46.4 / 38.0) and also QDTrack, the strongest baseline in the
+paper's own Table 6 (49.5 / 49.0). AssA (54.1 vs 56.9) and IDs (560 vs 178)
+remain behind. **This is val, on splits that are not the paper's** — it needs
+the held-out test before it is quotable.
+
+Speed cost: ECC runs every frame. UAVDT 45.2 -> 35.9 FPS, VisDrone 19.0 ->
+16.5. VisDrone now sits below the paper's 18.6.
+
+### Post-upgrade conf re-sweep and motion-model check — settings CONFIRMED
+
+Both re-checked after NSA+CMC, since conf 0.55 and the Euclidean model were
+chosen before either existed.
+
+**Conf** (NSA + Euclidean CMC):
+
+| conf | UAVDT HOTA | VD HOTA | worst-case | UAVDT MOTA | VD MOTA | UAVDT IDs | VD IDs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0.45 | 45.1 | **51.3** | 45.1 | 19.3 | **55.2** | 81 | 636 |
+| **0.55** | 45.7 | 51.1 | 45.7 | 24.2 | 54.6 | 70 | 560 |
+| 0.65 | **45.9** | 49.4 | **45.9** | **30.7** | 52.9 | **53** | **456** |
+
+**Kept 0.55.** 0.65 takes worst-case HOTA by 0.2 — inside noise — while costing
+VisDrone 1.7 HOTA. 0.55 has the best mean (48.4 vs 47.7), and remains the
+paper's unmodified value, so the final system still declares no threshold
+deviation.
+
+**CMC motion model** @ conf 0.55:
+
+| model | UAVDT HOTA | VD HOTA | VD IDF1 | VD IDs | UAVDT FPS | VD FPS |
+|---|---:|---:|---:|---:|---:|---:|
+| **euclidean** | **45.7** | 51.1 | 63.8 | 560 | 35.9 | **16.5** |
+| affine | 45.4 | **51.3** | **64.1** | **545** | **36.5** | 15.4 |
+
+**Kept Euclidean.** Affine is +0.2 HOTA on VisDrone, -0.3 on UAVDT, and ~1 FPS
+slower there. Its theoretical advantage — modelling the scale change from
+altitude variation, which a Euclidean warp cannot represent — did not show up
+measurably, so the more constrained and faster model wins. Worth stating in
+the writeup as a tested-and-rejected option rather than an untried one.
+
+## NSA Kalman filter (2026-08-10) — WIN at detection frames, HARMFUL on the tracking branch
+
+StrongSORT's NSA measurement noise (`R_hat = (1 - c) * R`, paper ref [39]),
+implemented in `kalman_filter.py` and gated by `--nsa` / `--nsa-tracking`.
+All rows: `retrain_aug_m_lowlr` + `full_run` + IoU-only + conf 0.55, tau 3.
+
+| Variant | UAVDT HOTA | UAVDT MOTA | UAVDT IDs | VD HOTA | VD MOTA | VD IDs |
+|---|---:|---:|---:|---:|---:|---:|
+| NSA off (baseline) | 44.3 | 21.8 | 74 | 45.4 | 46.6 | 849 |
+| NSA on **both** branches | 42.7 | 18.4 | 101 | 43.7 | 44.7 | 934 |
+| **NSA at detection frames only** | **45.4** | **24.4** | **71** | **46.6** | **49.8** | **774** |
+
+Full detection-only numbers: UAVDT MOTA 24.4 / IDF1 59.2 / HOTA 45.4 / DetA
+38.3 / AssA 54.2 / IDs 71; VisDrone MOTA 49.8 / IDF1 56.6 / HOTA 46.6 /
+DetA 46.3 / AssA 47.6 / IDs 774. **Better on every metric on both datasets**,
+at a small speed cost (UAVDT 45.2 -> 41.4 FPS, VisDrone 19.0 -> 18.4).
+
+**The interesting part is why applying it everywhere fails.** NSA assumes each
+update carries a *calibrated detector score*. In JMDST that only holds at
+detection frames. At tau=3 two thirds of Kalman updates come from the tracking
+branch, where the available number is FELNet's **anchor confidence** — which
+answers "does this anchor cover a target", not "is this box accurate". Those
+values are also high by construction (the c1 gate is 0.9), so `(1 - c)` drives
+measurement noise toward zero and the filter nearly snaps to a localisation
+whose actual IoU is only ~0.63. NSA instructs it to fully trust a mediocre
+measurement, destroying the Kalman smoothing that was compensating for it.
+Result: -1.6 / -1.7 HOTA and more ID switches.
+
+**Generalisable lesson**: NSA's benefit is conditional on the confidence being
+a *reliability* signal. Transplanting a DeepSORT-family upgrade into a
+dual-branch architecture requires checking what each branch's confidence
+actually means — StrongSORT's own ablation could not surface this, because
+every update in its pipeline is a detection.
+
+We measure **+1.1 / +1.2 HOTA**, larger than StrongSORT's reported +0.4 on
+MOT17. Both flags are kept so the negative variant stays reproducible.
+
 ## FINAL HELD-OUT TEST — general configuration (2026-08-09)
 
 **Supersedes the 2026-07-28 test section below**, which predates the yolo11m +

@@ -169,5 +169,66 @@ class TrackStateMachineTests(unittest.TestCase):
         np.testing.assert_allclose(track.bbox_xywh, bbox, atol=1e-9)
 
 
+class NsaKalmanTest(unittest.TestCase):
+    """StrongSORT NSA measurement noise: R_hat = (1 - confidence) * R."""
+
+    def setUp(self) -> None:
+        self.kf = KalmanFilter()
+        self.state = self.kf.initiate(np.array([100.0, 100.0, 0.5, 40.0]))
+
+    def test_confidence_none_is_unchanged_default_behaviour(self) -> None:
+        mean, cov = self.state
+        a = self.kf.project(mean, cov)
+        b = self.kf.project(mean, cov, None)
+        np.testing.assert_array_equal(a[1], b[1])
+
+    def test_higher_confidence_shrinks_innovation_covariance(self) -> None:
+        mean, cov = self.state
+        _, low = self.kf.project(mean, cov, 0.5)
+        _, high = self.kf.project(mean, cov, 0.95)
+        # More confident detection -> less measurement noise on every axis.
+        self.assertTrue(np.all(np.diag(high) < np.diag(low)))
+
+    def test_scaling_follows_the_published_formula(self) -> None:
+        mean, cov = self.state
+        _, base = self.kf.project(mean, cov)
+        _, scaled = self.kf.project(mean, cov, 0.75)
+        # project() returns H P H^T + R, so the R part is the difference from
+        # the confidence-free projection.
+        _, state_only = self.kf.project(mean, cov, 1.0 - 1.0)  # scale == 1.0
+        np.testing.assert_allclose(base, state_only, atol=1e-12)
+        r_base = np.diag(base) - np.diag(cov)[:4]
+        r_scaled = np.diag(scaled) - np.diag(cov)[:4]
+        np.testing.assert_allclose(r_scaled, r_base * 0.25, rtol=1e-9)
+
+    def test_confident_update_pulls_state_closer_to_measurement(self) -> None:
+        mean, cov = self.state
+        measurement = np.array([120.0, 100.0, 0.5, 40.0])
+        confident, _ = self.kf.update(mean, cov, measurement, 0.95)
+        unsure, _ = self.kf.update(mean, cov, measurement, 0.10)
+        self.assertLess(
+            abs(confident[0] - measurement[0]), abs(unsure[0] - measurement[0])
+        )
+
+    def test_extreme_confidence_stays_numerically_stable(self) -> None:
+        mean, cov = self.state
+        new_mean, new_cov = self.kf.update(mean, cov, np.array([101.0, 100.0, 0.5, 40.0]), 1.0)
+        self.assertTrue(np.all(np.isfinite(new_mean)))
+        self.assertTrue(np.all(np.isfinite(new_cov)))
+
+    def test_track_update_forwards_confidence(self) -> None:
+        bbox = np.array([10.0, 20.0, 30.0, 40.0])
+        moved = np.array([26.0, 20.0, 30.0, 40.0])
+        confident = Track.initiate(self.kf, track_id=1, bbox_xywh=bbox)
+        unsure = Track.initiate(self.kf, track_id=2, bbox_xywh=bbox)
+        confident.predict(self.kf)
+        unsure.predict(self.kf)
+        confident.update(self.kf, moved, confidence=0.95)
+        unsure.update(self.kf, moved, confidence=0.10)
+        self.assertLess(
+            abs(confident.bbox_xywh[0] - moved[0]), abs(unsure.bbox_xywh[0] - moved[0])
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

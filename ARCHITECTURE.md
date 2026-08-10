@@ -157,19 +157,29 @@ held-out test numbers.
 **One** setting for all inputs — the deployment target, since the model must
 handle arbitrary UAV footage rather than a specific benchmark:
 
-| Detector | FELNet | Association | conf | tau |
-|---|---|---|---|---|
-| `retrain_aug_m_lowlr` (combined yolo11m, low LR) | `full_run` (`overlap_scale=1`) | IoU-only | **0.55** | 3 |
+| Detector | FELNet | Association | conf | tau | Extras |
+|---|---|---|---|---|---|
+| `retrain_aug_m_lowlr` (combined yolo11m, low LR) | `full_run` (`overlap_scale=1`) | IoU-only | **0.55** | 3 | `--nsa --cmc` |
 
-| | UAVDT val | VisDrone val | **UAVDT test** | **VisDrone test** |
+**`--nsa` must stay detection-frames-only.** `--nsa-tracking` also applies it
+to tracking-branch updates and costs 1.6 HOTA: FELNet's anchor confidence
+reports anchor *coverage*, not localisation accuracy, so it is the wrong
+signal to scale measurement noise by. See `project_log.md`.
+
+Val, **with `--nsa --cmc`** (test not yet re-run with these — the test column
+below predates both):
+
+| | UAVDT val | VisDrone val | UAVDT test† | VisDrone test† |
 |---|---:|---:|---:|---:|
-| HOTA | 44.3 | 45.4 | **45.0** | **44.5** |
-| IDF1 | 58.8 | 56.1 | 57.1 | 52.8 |
-| AssA | 53.2 | 47.3 | 43.8 | 53.9 |
-| DetA | 37.0 | 44.2 | 46.4 | 37.1 |
-| MOTA | 21.8\* | 46.6 | 51.8 | 38.2 |
-| IDs | 74 | 849 | 767 | 583 |
-| FPS | 45.2 | 19.0 | 30.3 | 15.6 |
+| HOTA | **45.7** | **51.1** | 45.0 | 44.5 |
+| IDF1 | 59.9 | 63.8 | 57.1 | 52.8 |
+| AssA | 54.9 | 54.1 | 43.8 | 53.9 |
+| DetA | 38.3 | 48.7 | 46.4 | 37.1 |
+| MOTA | 24.2\* | 54.6 | 51.8 | 38.2 |
+| IDs | 70 | 560 | 767 | 583 |
+| FPS | 35.9 | 16.5 | 30.3 | 15.6 |
+
+† **Stale**: measured without `--nsa --cmc`. Re-run test before quoting.
 
 Held-out test confirms val: HOTA 45.0 / 44.5. Against the published paper,
 VisDrone is within **0.9 DetA / 1.9 HOTA**; UAVDT trails by 15.1 HOTA, and on

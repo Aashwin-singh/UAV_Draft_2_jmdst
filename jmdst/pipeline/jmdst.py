@@ -61,14 +61,28 @@ class JMDSTTracker:
         max_cosine_distance: float = 0.3,
         max_age: int = 100,
         use_appearance: bool = True,
+        use_nsa: bool = False,
+        nsa_tracking_branch: bool = False,
+        cmc: object | None = None,
     ) -> None:
+        # NSA on the tracking branch is a separate switch because the signal it
+        # would consume is different in kind. At detection frames the
+        # confidence is YOLO's calibrated detector score; on tracking frames it
+        # is FELNet's *anchor* confidence, which answers "does this anchor
+        # cover a target", not "is this box accurate". Measured 2026-08-10:
+        # feeding the latter into NSA costs ~1.6 HOTA on both datasets.
+        self.nsa_tracking_branch = nsa_tracking_branch
         self.detector = detector
         self.localizer = localizer
         self.tau = tau
+        # Optional CameraMotionCompensator. When present, every frame's global
+        # warp is applied to all track states before predict/associate, so
+        # Kalman state and incoming detections share a coordinate frame.
+        self.cmc = cmc
         self.tracker = Tracker(
             tau=tau, d=d, c1=c1, i1=i1, i2=i2,
             max_cosine_distance=max_cosine_distance, max_age=max_age,
-            use_appearance=use_appearance,
+            use_appearance=use_appearance, use_nsa=use_nsa,
         )
         self.frame_index = 0
 
@@ -76,6 +90,15 @@ class JMDSTTracker:
 
     def process_frame(self, image: object, image_size: tuple[float, float]) -> list[ConfirmedOutput]:
         """Process one frame; return its confirmed-state tracklet outputs."""
+
+        # Camera motion compensation runs first, on every frame, so that both
+        # branches see track states already aligned to this frame. Must precede
+        # tracker.predict(): CMC changes the coordinate frame, predict advances
+        # motion within it.
+        if self.cmc is not None:
+            warp = self.cmc.estimate(image)
+            if warp is not None:
+                self.cmc.apply(self.tracker.tracks, warp)
 
         if self.frame_index % self.tau == 0:
             self._detection_frame(image)
@@ -132,7 +155,12 @@ class JMDSTTracker:
         # Base targets are trusted -- always updated with their localization.
         for track, (emb, refined_box, felnet_conf) in zip(base, base_results):
             refined = np.asarray(refined_box, dtype=np.float64)
-            track.update(self.tracker.kf, refined, np.asarray(emb, dtype=np.float64))
+            # NSA uses FELNet's anchor confidence here -- the tracking branch's
+            # own measure of how much to trust this localization.
+            track.update(
+                self.tracker.kf, refined, np.asarray(emb, dtype=np.float64),
+                float(felnet_conf) if self.nsa_tracking_branch else None,
+            )
             track.last_confidence = float(felnet_conf)
             updated_ids.add(track.track_id)
             base_boxes.append(refined)
@@ -148,7 +176,10 @@ class JMDSTTracker:
         expansion_by_id = {t.track_id: t for t in expansion}
         for track_id, output in kept.items():
             track = expansion_by_id[track_id]
-            track.update(self.tracker.kf, output.bbox_xywh, output.embedding)
+            track.update(
+                self.tracker.kf, output.bbox_xywh, output.embedding,
+                float(output.confidence) if self.nsa_tracking_branch else None,
+            )
             track.last_confidence = float(output.confidence)
             updated_ids.add(track_id)
 
