@@ -115,11 +115,15 @@ class JMDSTTracker:
         confidences = [float(conf) for _box, conf in raw]
 
         embeddings: list[np.ndarray | None]
-        if boxes:
+        if boxes and self.tracker.use_appearance:
             localized = self.localizer(image, boxes)
             embeddings = [np.asarray(emb, dtype=np.float64) for emb, _rb, _fc in localized]
         else:
-            embeddings = []
+            # Under IoU-only association nothing reads these. appearance_cost_matrix
+            # is their sole consumer and _match skips it entirely, so running
+            # FELNet here would be one forward pass per detection per detection
+            # frame for a value that is stored and never looked at.
+            embeddings = [None] * len(boxes)
 
         detections = [
             Detection(boxes[i], confidences[i], embeddings[i]) for i in range(len(boxes))

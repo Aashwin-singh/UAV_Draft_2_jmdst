@@ -52,6 +52,18 @@ class MockLocalizer:
         return results
 
 
+class _CountingLocalizer(MockLocalizer):
+    """MockLocalizer that records how many times it was invoked."""
+
+    def __init__(self, identity_anchors, felnet_conf: float = 0.99):
+        super().__init__(identity_anchors, felnet_conf)
+        self.calls = 0
+
+    def __call__(self, image, boxes_xywh):
+        self.calls += 1
+        return super().__call__(image, boxes_xywh)
+
+
 class DualBranchOrchestrationTests(unittest.TestCase):
     def test_detection_and_tracking_frames_alternate(self) -> None:
         # tau=3: frames 0,3,6 detect; 1,2,4,5 track. A target sits still and is
@@ -139,6 +151,50 @@ class DualBranchOrchestrationTests(unittest.TestCase):
         out = jmdst.process_frame(_DummyImage(), (1000, 1000))
         self.assertEqual(out, [])
         self.assertEqual(len(jmdst.tracker.tracks), 0)
+
+
+class DetectionBranchEmbeddingTests(unittest.TestCase):
+    """Embeddings are only computed when association will actually read them.
+
+    appearance_cost_matrix is their sole consumer and IoU-only association
+    skips it, so calling the localizer on the detection branch there is one
+    wasted FELNet forward per detection per detection frame.
+    """
+
+    def _run_detection_frame(self, *, use_appearance: bool):
+        box = np.array([100.0, 100.0, 20.0, 20.0])
+        localizer = _CountingLocalizer([(np.array([110.0, 110.0]), _emb(1.0, 0.0))])
+        jmdst = JMDSTTracker(
+            MockDetector([[(box, 0.9)]]), localizer, tau=3, use_appearance=use_appearance
+        )
+        jmdst.process_frame(_DummyImage(), (1000, 1000))
+        return jmdst, localizer
+
+    def test_iou_only_skips_the_localizer_on_detection_frames(self) -> None:
+        jmdst, localizer = self._run_detection_frame(use_appearance=False)
+        self.assertEqual(localizer.calls, 0)
+        # A track is still created -- only the unused embedding is skipped.
+        self.assertEqual(len(jmdst.tracker.tracks), 1)
+        self.assertIsNone(jmdst.tracker.tracks[0].embedding_history[-1]
+                          if jmdst.tracker.tracks[0].embedding_history else None)
+
+    def test_appearance_mode_still_computes_embeddings(self) -> None:
+        jmdst, localizer = self._run_detection_frame(use_appearance=True)
+        self.assertEqual(localizer.calls, 1)
+        self.assertTrue(jmdst.tracker.tracks[0].embedding_history)
+
+    def test_iou_only_still_uses_the_localizer_on_tracking_frames(self) -> None:
+        # The tracking branch needs FELNet for box refinement regardless of
+        # association mode -- the skip must not leak into it.
+        box = np.array([100.0, 100.0, 20.0, 20.0])
+        localizer = _CountingLocalizer([(np.array([110.0, 110.0]), _emb(1.0, 0.0))])
+        jmdst = JMDSTTracker(
+            MockDetector([[(box, 0.9)]]), localizer, tau=3, use_appearance=False
+        )
+        jmdst.process_frame(_DummyImage(), (1000, 1000))   # detection frame
+        self.assertEqual(localizer.calls, 0)
+        jmdst.process_frame(_DummyImage(), (1000, 1000))   # tracking frame
+        self.assertEqual(localizer.calls, 1)
 
 
 if __name__ == "__main__":

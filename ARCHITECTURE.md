@@ -183,7 +183,10 @@ below predates both):
 | DetA | 38.3 | 48.7 | 46.4 | 37.1 |
 | MOTA | 24.2\* | 54.6 | 51.8 | 38.2 |
 | IDs | 70 | 560 | 767 | 583 |
-| FPS | 35.9 | 16.5 | 30.3 | 15.6 |
+| FPS | **39.1** | **20.5** | 23.6‡ | 13.0‡ |
+
+‡ Test FPS predates the Phase-1 embedding skip and understates the system;
+tracking output is provably unchanged, only the timing is stale.
 
 † **Stale**: measured without `--nsa --cmc`. Re-run test before quoting.
 

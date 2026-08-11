@@ -235,6 +235,39 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## BYTE upgrade, Phase 1 — skip unused embeddings (2026-08-11)
+
+Groundwork for the BYTE two-stage association (Phase 2). Pure optimisation:
+**zero behaviour change, verified byte-for-byte.**
+
+Under IoU-only association the detection branch was running FELNet on every
+detection to produce an embedding that nothing ever read.
+`appearance_cost_matrix` is their only consumer and `Tracker._match` skips it
+entirely when `use_appearance=False`, so this was one wasted forward pass per
+detection, per detection frame. The tracking branch still needs FELNet for box
+refinement and is untouched.
+
+| | before | after | change |
+|---|---:|---:|---:|
+| UAVDT val FPS | 35.9 | **39.1** | +9.0% |
+| VisDrone val FPS | 16.5 | **20.5** | **+24.7%** |
+
+**Correctness**: re-ran the full shipping config on val and diffed the MOT
+output against `outputs/nsa_cmc_val` — **13 of 13 sequence files identical,
+0 differing**. Every metric is unchanged by construction.
+
+VisDrone gains most because it carries the most detections per frame (40+ on
+dense sequences). At **20.5 FPS it is now above the paper's 18.6**, reversing
+the regression the CMC work introduced.
+
+Three tests pin the contract: IoU-only mode must not call the localizer on
+detection frames, appearance mode must, and the tracking branch must call it
+in both. 129 tests pass.
+
+**Note**: the held-out test FPS figures (UAVDT 23.6, VisDrone 13.0) were
+measured before this change and now understate the system. Tracking output is
+provably identical, so only the timing is stale.
+
 ## FINAL HELD-OUT TEST — with NSA + CMC (2026-08-10)
 
 Config frozen from val: `retrain_aug_m_lowlr` + `full_run` + IoU-only +
@@ -394,6 +427,34 @@ slower there. Its theoretical advantage — modelling the scale change from
 altitude variation, which a Euclidean warp cannot represent — did not show up
 measurably, so the more constrained and faster model wins. Worth stating in
 the writeup as a tested-and-rejected option rather than an untried one.
+
+#### Follow-up: why affine buys nothing here (2026-08-11)
+
+An external suggestion proposed defaulting to **affine** (for altitude
+variation) with **Euclidean as a per-frame fallback** when the 6-parameter fit
+is ill-conditioned from "too few keypoints". Checked and rejected on three
+counts:
+
+1. **There are no keypoints.** Our CMC is **ECC** — dense, gradient-based
+   intensity alignment (`cv2.findTransformECC`). Keypoint starvation is the
+   failure mode of *feature-based* GMC (ORB/SIFT + RANSAC, as in BoT-SORT),
+   not of ECC. ECC fails by non-convergence instead, which is already handled:
+   `estimate()` returns `None` and the caller skips compensation that frame.
+2. **The failure it guards against does not occur.** Measured over 6 sequences
+   x 199 estimates x 2 models = **1,194 estimates, 0 failures (0.0%)** — and
+   that set deliberately included the worst sequences in the project (UAVDT
+   M0210, MOTA 2.2; VisDrone uav0000263, MOTA -0.8; M1009, MOTP 67.9). A
+   fallback path would be dead code.
+3. **Affine recovers essentially no scale.** Per-frame `|scale - 1|`: median
+   0.0005-0.0047, **max 0.0097** across all six sequences. Altitude variation
+   is real *over a sequence*, but CMC is a **frame-to-frame** operation and a
+   drone cannot change altitude appreciably in 33 ms. Affine's extra three
+   parameters have almost nothing to model. Max frame-to-frame rotation is
+   also small (0.37 deg) and Euclidean already covers it.
+
+Consistent with the end-to-end ablation above, which is the fourth line of
+evidence. **Euclidean stays the default.** `--cmc-motion affine` remains
+available.
 
 ## NSA Kalman filter (2026-08-10) — WIN at detection frames, HARMFUL on the tracking branch
 
