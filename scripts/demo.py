@@ -143,6 +143,27 @@ def draw_outputs(frame_bgr: np.ndarray, outputs, thickness: int = 2) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
 
+def warm_up(tracker, frame_bgr: np.ndarray, rounds: int = 3) -> float:
+    """Pre-pay the CUDA cold start before the audience is watching.
+
+    The first inference on a fresh CUDA context measures ~2.2 s against a ~19 ms
+    steady state (116x). Left unwarmed, a live demo freezes on frame 0 for two
+    seconds, which looks like a crash.
+
+    Exercises the detector and localizer directly rather than
+    ``process_frame``, so tracker state (tracks, frame_index, CMC's previous
+    frame) is untouched and the demo still starts from a clean slate.
+    """
+
+    image = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+    probe = [np.array([0.0, 0.0, 64.0, 64.0], dtype=np.float64)]
+    started = time.perf_counter()
+    for _ in range(rounds):
+        tracker.detector(image)
+        tracker.localizer(image, probe)
+    return time.perf_counter() - started
+
+
 def draw_hud(frame_bgr: np.ndarray, lines: list[str]) -> None:
     pad, line_h = 8, 22
     box_h = pad * 2 + line_h * len(lines)
@@ -177,6 +198,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-nsa", action="store_true", help="Disable the NSA Kalman filter (on by default).")
     parser.add_argument("--no-cmc", action="store_true", help="Disable camera-motion compensation (on by default).")
     parser.add_argument("--no-hud", action="store_true", help="Hide the overlay panel.")
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=3,
+        help=(
+            "Dummy inference rounds before frame 0, to pre-pay the CUDA cold start "
+            "(~2.2s vs ~19ms steady state). Set 0 to disable."
+        ),
+    )
     return parser
 
 
@@ -216,6 +246,13 @@ def main() -> None:
     try:
         for frame_bgr in frames:
             height, width = frame_bgr.shape[:2]
+
+            if index == 0 and args.warmup > 0:
+                print(f"warming up ({args.warmup} rounds)...", flush=True)
+                elapsed = warm_up(tracker, frame_bgr, args.warmup)
+                print(f"  ready in {elapsed:.1f}s", flush=True)
+                started = time.perf_counter()  # exclude warmup from the FPS report
+
             image = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
 
             t0 = time.perf_counter()
