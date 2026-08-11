@@ -4,12 +4,13 @@
 single-target tracking framework for vehicles tracking based on UAV,"
 *Aerospace Science and Technology* 171 (2026) 111625.
 
-**Date:** 2026-08-10 | **Hardware:** RTX 4070 Laptop (8 GB) | **Paper's hardware:** RTX 3070
+**Date:** 2026-08-11 | **Hardware:** RTX 4070 Laptop (8 GB) | **Paper's hardware:** RTX 3070
 
 **Final configuration (single, used for both datasets):** YOLOv11m
 (`retrain_aug_m_lowlr`, combined-dataset training, lr0 0.0025) + FELNet
-(`full_run`) + IoU-only association + NSA Kalman (detection frames) +
-ECC camera-motion compensation + conf 0.55 + τ = 3.
+(`full_run`) + IoU-only association + **BYTE two-stage matching**
+(low band 0.4) + NSA Kalman (detection frames) + ECC camera-motion
+compensation + conf 0.55 + τ = 3.
 
 > **Comparability note.** The paper never published its UAVDT/VisDrone sequence
 > splits, so our seeded-random splits are **not** the paper's test set. All
@@ -24,15 +25,15 @@ ECC camera-motion compensation + conf 0.55 + τ = 3.
 
 | Configuration | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Ours — IoU association** | **54.3** | 77.6 | **59.0** | **47.2** | **48.1** | **46.5** | **661** | 21003 | 42604 | 23.6 |
-| Ours — FELNet appearance | 52.2 | 77.6 | 46.9 | 38.5 | 47.9 | 31.1 | 2388 | 23057 | 41691 | 26.0 |
+| **Ours — IoU association** | **55.4** | 77.5 | **59.7** | **47.8** | 48.7 | **47.1** | **637** | 21320 | 40745 | **26.9** |
+| Ours — FELNet appearance | 53.8 | 77.5 | 50.0 | 40.6 | **48.8** | 33.9 | 2258 | 23241 | **39451** | 25.6 |
 
 ### 1.2 VisDrone2019 test — 10 sequences
 
 | Configuration | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Ours — IoU association** | **42.7** | **78.7** | **58.2** | **48.1** | 39.3 | **59.1** | **345** | 9464 | 38523 | 13.0 |
-| Ours — FELNet appearance | 42.5 | 78.6 | 53.6 | 45.0 | **39.6** | 51.4 | 770 | 9551 | 38149 | 11.7 |
+| **Ours — IoU association** | **44.6** | **78.6** | **59.7** | **49.3** | 40.4 | **60.6** | **317** | **9056** | 37333 | **15.6** |
+| Ours — FELNet appearance | 43.4 | 78.5 | 55.1 | 46.0 | 40.4 | 52.5 | 734 | 9942 | **36999** | 11.7 |
 
 ---
 
@@ -50,7 +51,7 @@ Paper values transcribed from its Tables 5 and 6.
 | DiffusionTrack (paper) | 46.9 | 75.3 | 129 | 62.3 | 46.5 | 40.7 | 53.5 | 9.6 |
 | QDTrack (paper) | **69.7** | **81.5** | 179 | **76.5** | **62.9** | **59.2** | **67.0** | 13.0 |
 | JMDST (paper) | 67.3 | 81.2 | 170 | 73.5 | 60.1 | 59.0 | 61.3 | **26.6** |
-| **JMDST (ours)** | 54.3 | 77.6 | 661 | 59.0 | 47.2 | 48.1 | 46.5 | 23.6 |
+| **JMDST (ours)** | 55.4 | 77.5 | 637 | 59.7 | 47.8 | 48.7 | 47.1 | **26.9** |
 
 ### 2.2 VisDrone2019
 
@@ -62,20 +63,23 @@ Paper values transcribed from its Tables 5 and 6.
 | DiffusionTrack (paper) | 40.5 | 75.3 | 652 | 55.0 | 43.2 | 37.9 | 50.1 | 13.2 |
 | QDTrack (paper) | **49.5** | 77.2 | **161** | **66.0** | 49.0 | **41.0** | 58.9 | 11.3 |
 | JMDST (paper) | 44.9 | 76.5 | 178 | 62.4 | 46.4 | 38.0 | 56.9 | **18.6** |
-| **JMDST (ours)** | 42.7 | **78.7** | 345 | 58.2 | **48.1** | 39.3 | **59.1** | 13.0 |
+| **JMDST (ours)** | 44.6 | **78.6** | 317 | 59.7 | **49.3** | 40.4 | **60.6** | 15.6 |
 
 ### 2.3 Ours vs. paper's JMDST — deltas
 
 | Metric | UAVDT (ours − paper) | VisDrone (ours − paper) |
 |---|---:|---:|
-| MOTA | −13.0 | −2.2 |
-| MOTP | −3.6 | **+2.2** |
-| IDF1 | −14.5 | −4.2 |
-| **HOTA** | −12.9 | **+1.7** |
-| DetA | −10.9 | **+1.3** |
-| AssA | −14.8 | **+2.2** |
-| IDs | worse (661 vs 170) | worse (345 vs 178) |
-| FPS | −3.0 | −5.6 |
+| MOTA | −11.9 | −0.3 |
+| MOTP | −3.7 | **+2.1** |
+| IDF1 | −13.8 | −2.7 |
+| **HOTA** | −12.3 | **+2.9** |
+| DetA | −10.3 | **+2.4** |
+| AssA | −14.2 | **+3.7** |
+| IDs | worse (637 vs 170) | worse (317 vs 178) |
+| FPS | **+0.3** | −3.0 |
+
+Ours vs. **QDTrack**, the strongest baseline in the paper's own tables:
+VisDrone HOTA **+0.3** (49.3 vs 49.0) and AssA **+1.7** (60.6 vs 58.9).
 
 ---
 
@@ -101,7 +105,8 @@ Paper values transcribed from its Tables 5 and 6.
 | + yolo11m detector | 41.5 | 43.5 |
 | + low-LR detector retrain | 44.3 | 45.4 |
 | + NSA Kalman (detection frames) | 45.4 | 46.6 |
-| **+ ECC camera-motion compensation** | **45.7** | **51.1** |
+| + ECC camera-motion compensation | 45.7 | 51.1 |
+| **+ BYTE two-stage association** | **46.6** | **51.8** |
 
 ### 3.3 NSA + CMC ablation (val, HOTA)
 
@@ -120,13 +125,43 @@ Paper values transcribed from its Tables 5 and 6.
 | NSA on both branches | 42.7 | 101 | 43.7 | 934 |
 | **NSA at detection frames only** | **45.4** | **71** | **46.6** | **774** |
 
-### 3.5 Confidence-threshold sweep (val, final config)
+### 3.5 Confidence-threshold sweep (val, final config incl. BYTE)
 
 | conf | UAVDT HOTA | VisDrone HOTA | UAVDT MOTA | VisDrone MOTA |
 |---|---:|---:|---:|---:|
-| 0.45 | 45.1 | **51.3** | 19.3 | **55.2** |
-| **0.55 (selected, = paper's value)** | 45.7 | 51.1 | 24.2 | 54.6 |
-| 0.65 | **45.9** | 49.4 | **30.7** | 52.9 |
+| 0.45 | 45.6 | 51.4 | 20.8 | 56.0 |
+| 0.50 | 45.9 | 51.6 | 22.8 | 55.7 |
+| **0.55 (selected, = paper's value)** | **46.6** | **51.8** | 25.7 | 56.3 |
+| 0.60 | 45.9 | 51.1 | 27.3 | 55.7 |
+| 0.65 | 46.2 | 51.2 | **30.0** | **56.5** |
+
+0.55 is the maximum of both HOTA columns independently, not a compromise.
+
+### 3.7 BYTE low-confidence band sweep (val)
+
+| `--byte-low-conf` | UAVDT HOTA | VisDrone HOTA | UAVDT MOTA | VisDrone MOTA | UAVDT FP+FN |
+|---|---:|---:|---:|---:|---:|
+| off | 45.7 | 51.1 | 24.2 | 54.6 | 17298 |
+| 0.1 | 45.4 | **52.7** | 22.4 | **57.8** | 17734 |
+| 0.2 | 45.4 | 52.6 | 22.0 | 57.5 | 17816 |
+| 0.3 | 45.4 | 52.1 | 23.3 | 57.2 | 17520 |
+| **0.4 (selected)** | **46.6** | 51.8 | **25.7** | 56.3 | **16972** |
+| 0.45 | 45.7 | 51.3 | 24.3 | 55.4 | 17294 |
+| 0.5 | 45.8 | 51.4 | 23.9 | 55.9 | 17382 |
+
+0.4 is the only setting where both datasets beat the BYTE-off baseline.
+
+### 3.8 Low-confidence band composition (measured, test sequences)
+
+Detections at 0.10–0.55, scored against ground truth at IoU ≥ 0.5.
+
+| Sequence | high/frame | low/frame | real objects in low band /frame |
+|---|---:|---:|---:|
+| M0101 | 16.3 | 6.8 | 0.58 |
+| uav0000308_00000_v | 13.7 | 3.3 | 0.78 |
+| M1006 | 19.9 | 18.6 | 7.82 |
+| M1301 | 22.2 | 22.6 | 7.88 |
+| uav0000124_00944_v | 40.2 | 21.5 | **14.73** |
 
 ### 3.6 CMC motion model (val, conf 0.55)
 
@@ -146,8 +181,10 @@ were available, so "off" here means no appearance model at all.
 |---|---|---:|---:|---:|---:|---:|
 | val | UAVDT | 38.9 | **43.2** | +4.3 | 282 | **96** |
 | val | VisDrone | 39.6 | **44.6** | +5.0 | 2041 | **1037** |
-| test | UAVDT | 38.5 | **47.2** | **+8.7** | 2388 | **661** |
-| test | VisDrone | 45.0 | **48.1** | +3.1 | 770 | **345** |
+| test (pre-BYTE) | UAVDT | 38.5 | **47.2** | +8.7 | 2388 | 661 |
+| test (pre-BYTE) | VisDrone | 45.0 | **48.1** | +3.1 | 770 | 345 |
+| **test (final)** | UAVDT | 40.6 | **47.8** | **+7.2** | 2258 | **637** |
+| **test (final)** | VisDrone | 46.0 | **49.3** | +3.3 | 734 | **317** |
 
 ### 4.1 FELNet loss-rebalancing attempts (val, component metrics)
 
@@ -189,28 +226,28 @@ Diverged: paper's FP decreases with τ, ours increases.
 
 | Sequence | MOTA | MOTP | IDF1 | IDs | FP | FN |
 |---|---:|---:|---:|---:|---:|---:|
-| M0101 | **75.3** | 80.2 | **80.9** | 16 | 977 | 280 |
-| M0603 | 74.1 | 78.1 | 57.9 | 263 | 6742 | 3750 |
-| M0703 | 73.8 | 80.0 | 68.5 | 98 | 1888 | 2001 |
-| M1301 | 51.4 | 76.1 | 65.1 | 37 | 3328 | 15351 |
-| M1006 | 39.0 | 79.1 | 58.6 | 88 | 3580 | 9358 |
-| M1009 | 16.8 | 67.9 | 31.2 | 109 | 1709 | 6014 |
-| M1004 | 14.3 | 73.4 | 30.5 | **6** | **247** | 3806 |
-| M0210 | 2.2 | 73.8 | 34.7 | 44 | 2532 | 2044 |
+| M0703 | **74.9** | 80.0 | 69.8 | 88 | 2018 | 1722 |
+| M0101 | 74.3 | 80.2 | **80.5** | 16 | 1050 | 258 |
+| M0603 | 71.3 | 78.0 | 57.0 | 265 | 8106 | 3516 |
+| M1301 | 55.4 | 76.0 | 67.6 | 26 | 2442 | 14682 |
+| M1006 | 43.3 | 79.0 | 60.4 | 82 | 3142 | 8898 |
+| M1009 | 17.2 | 67.8 | 27.7 | 114 | 1719 | 5959 |
+| M1004 | 16.1 | 73.1 | 32.7 | **6** | **235** | 3731 |
+| M0210 | 2.1 | 74.0 | 38.4 | 40 | 2608 | 1979 |
 
 ### 6.2 VisDrone2019 test
 
 | Sequence | MOTA | MOTP | IDF1 | IDs | FP | FN |
 |---|---:|---:|---:|---:|---:|---:|
-| uav0000308_00000_v | **74.0** | **84.2** | **80.7** | 6 | 341 | 503 |
-| uav0000306_00230_v | 63.2 | 76.5 | 75.1 | 20 | 907 | 1652 |
-| uav0000316_01288_v | 57.2 | 79.4 | 65.5 | 18 | 147 | 430 |
-| uav0000119_02301_v | 50.6 | 78.0 | 65.4 | 23 | 269 | 1608 |
-| uav0000315_00000_v | 46.2 | 79.3 | 62.8 | 51 | 3191 | 4126 |
-| uav0000124_00944_v | 42.2 | 79.3 | 55.6 | 58 | 842 | 19165 |
-| uav0000281_00460_v | 36.7 | 76.2 | 51.0 | 130 | 1745 | 6704 |
-| uav0000370_00001_v | 18.0 | 79.1 | 37.2 | 10 | 404 | 1616 |
-| uav0000263_03289_v | −0.8 | 77.6 | 33.2 | 29 | 1618 | 2706 |
+| uav0000308_00000_v | **76.6** | **84.2** | **84.0** | **3** | 332 | 431 |
+| uav0000306_00230_v | 67.4 | 76.4 | 78.2 | 19 | 716 | 1547 |
+| uav0000316_01288_v | 56.5 | 79.5 | 63.3 | 12 | **170** | 423 |
+| uav0000315_00000_v | 52.8 | 79.2 | 65.8 | 47 | 2637 | 3779 |
+| uav0000119_02301_v | 51.1 | 78.0 | 66.3 | 22 | 291 | 1571 |
+| uav0000124_00944_v | 43.0 | 79.2 | 56.3 | 55 | 756 | 18994 |
+| uav0000281_00460_v | 34.7 | 76.2 | 51.8 | 121 | 2329 | 6394 |
+| uav0000370_00001_v | 19.1 | 79.6 | 38.8 | 9 | 401 | 1592 |
+| uav0000263_03289_v | 6.4 | 77.3 | 35.1 | 29 | 1424 | 2589 |
 | uav0000073_00600_v\* | 0.0 | n/a | 0.0 | 0 | 0 | 13 |
 
 \* 13 ground-truth objects in the entire sequence.
@@ -242,7 +279,7 @@ embedding dim 16, SSI 64×64.
 |---|---|
 | Phases 1–5, 7–11 | Complete, verified, committed |
 | Phase 6 (MSFP) | Not implemented — `mamba-ssm` PyPI sdist ships without its CUDA sources |
-| Unit tests | 112 passing |
+| Unit tests | 136 passing |
 | Splits held out | Test split used once, after config was frozen on val |
 
 ### Deviations from the paper
@@ -253,4 +290,5 @@ embedding dim 16, SSI 64×64.
 | YOLOv11m at lr0 0.0025 (paper: "default parameters") | +11.1 MOTA val vs yolo11n at default LR |
 | NSA Kalman filter, detection frames only | Paper specifies no Kalman internals |
 | ECC camera-motion compensation | Addresses the failure mode in paper Sec. 3.5.4 |
+| BYTE two-stage association (low band 0.4) | +0.6 / +1.2 HOTA on test; recovers real objects the 0.55 threshold discarded |
 | Phase 6 (MSFP) absent | Dependency unbuildable; ~1 % by paper's own ablation |

@@ -10,7 +10,7 @@ this JMDST reproduction. Read alongside:
 
 **Status**: 10 of 11 phases implemented. Only Phase 6 (MSFP) is missing —
 blocked because the PyPI `mamba-ssm` sdist ships without its CUDA sources.
-93 tests pass. Final held-out test results are in `project_log.md`.
+136 tests pass. Final held-out test results are in `project_log.md`.
 
 ---
 
@@ -134,7 +134,7 @@ plausible-looking but wrong numbers rather than a crash.
 ## Running things
 
 ```bash
-python -m unittest discover -s tests          # 93 tests; use discover, not -m unittest tests.x
+python -m unittest discover -s tests          # 136 tests; use discover, not -m unittest tests.x
 python scripts/run_jmdst.py --yolo <w> --felnet <c> --datasets uavdt --split val --tau 3
 python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val
 python scripts/run_ablations.py --datasets uavdt --split val
@@ -165,7 +165,7 @@ handle arbitrary UAV footage rather than a specific benchmark:
 
 | Detector | FELNet | Association | conf | tau | Extras |
 |---|---|---|---|---|---|
-| `retrain_aug_m_lowlr` (combined yolo11m, low LR) | `full_run` (`overlap_scale=1`) | IoU-only | **0.55** | 3 | `--nsa --cmc` |
+| `retrain_aug_m_lowlr` (combined yolo11m, low LR) | `full_run` (`overlap_scale=1`) | IoU-only | **0.55** | 3 | `--nsa --cmc --byte --byte-low-conf 0.4` |
 
 **`--nsa` must stay detection-frames-only.** `--nsa-tracking` also applies it
 to tracking-branch updates and costs 1.6 HOTA: FELNet's anchor confidence
@@ -175,25 +175,23 @@ signal to scale measurement noise by. See `project_log.md`.
 Val, **with `--nsa --cmc`** (test not yet re-run with these — the test column
 below predates both):
 
-| | UAVDT val | VisDrone val | UAVDT test† | VisDrone test† |
+| | UAVDT val | VisDrone val | UAVDT test | VisDrone test |
 |---|---:|---:|---:|---:|
-| HOTA | **45.7** | **51.1** | 45.0 | 44.5 |
-| IDF1 | 59.9 | 63.8 | 57.1 | 52.8 |
-| AssA | 54.9 | 54.1 | 43.8 | 53.9 |
-| DetA | 38.3 | 48.7 | 46.4 | 37.1 |
-| MOTA | 24.2\* | 54.6 | 51.8 | 38.2 |
-| IDs | 70 | 560 | 767 | 583 |
-| FPS | **39.1** | **20.5** | 23.6‡ | 13.0‡ |
+| HOTA | **46.6** | **51.8** | **47.8** | **49.3** |
+| IDF1 | 61.1 | 64.8 | 59.7 | 59.7 |
+| AssA | 55.8 | 54.4 | 47.1 | 60.6 |
+| DetA | 39.1 | 49.8 | 48.7 | 40.4 |
+| MOTA | 25.7\* | 56.3 | 55.4 | 44.6 |
+| IDs | 60 | 519 | 637 | 317 |
+| FPS | 46.9 | 20.2 | 26.9 | 15.6 |
 
-‡ Test FPS predates the Phase-1 embedding skip and understates the system;
-tracking output is provably unchanged, only the timing is stale.
 
-† **Stale**: measured without `--nsa --cmc`. Re-run test before quoting.
 
-Held-out test confirms val: HOTA 45.0 / 44.5. Against the published paper,
-VisDrone is within **0.9 DetA / 1.9 HOTA**; UAVDT trails by 15.1 HOTA, and on
-test that shortfall is **association-dominated** (AssA -17.5 vs DetA -12.6),
-which is what CMC / NSA-Kalman target.
+Held-out test confirms val. Against the published paper, **VisDrone now ties
+on MOTA (44.6 vs 44.9) and exceeds on HOTA (+2.9), AssA (+3.7), DetA (+2.4)
+and MOTP (+2.1)** — and edges QDTrack, the paper's strongest baseline, on HOTA
+and AssA. UAVDT still trails on every metric (HOTA -12.3). Splits are not the
+paper's, so none of this is like-for-like.
 
 conf 0.55 maximises the *worse* of the two HOTAs (the right criterion for a
 general model, rather than the average), is VisDrone's outright optimum, and

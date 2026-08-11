@@ -235,6 +235,85 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## FINAL HELD-OUT TEST — with BYTE (2026-08-11)
+
+Config frozen from val: `retrain_aug_m_lowlr` + `full_run` + IoU-only +
+`--nsa --cmc --byte --byte-low-conf 0.4` + conf 0.55 + tau 3.
+
+| Dataset / assoc | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **UAVDT, IoU-only** | **55.4** | 77.5 | **59.7** | **47.8** | 48.7 | **47.1** | **637** | 21320 | 40745 | **26.9** |
+| UAVDT, appearance | 53.8 | 77.5 | 50.0 | 40.6 | **48.8** | 33.9 | 2258 | 23241 | **39451** | 25.6 |
+| **VisDrone, IoU-only** | **44.6** | **78.6** | **59.7** | **49.3** | 40.4 | **60.6** | **317** | **9056** | 37333 | **15.6** |
+| VisDrone, appearance | 43.4 | 78.5 | 55.1 | 46.0 | 40.4 | 52.5 | 734 | 9942 | **36999** | 11.7 |
+
+### BYTE replicates on held-out data
+
+| | test without BYTE | with BYTE | delta |
+|---|---:|---:|---:|
+| UAVDT HOTA | 47.2 | **47.8** | +0.6 |
+| UAVDT MOTA | 54.3 | **55.4** | +1.1 |
+| VisDrone HOTA | 48.1 | **49.3** | **+1.2** |
+| VisDrone MOTA | 42.7 | **44.6** | **+1.9** |
+| VisDrone IDs | 345 | **317** | -8% |
+
+### Versus the paper — VisDrone now matches on MOTA and exceeds on HOTA
+
+| VisDrone | ours (test) | paper JMDST | QDTrack (paper's best baseline) |
+|---|---:|---:|---:|
+| **HOTA** | **49.3** | 46.4 (**+2.9**) | 49.0 (**+0.3**) |
+| **AssA** | **60.6** | 56.9 (**+3.7**) | 58.9 (**+1.7**) |
+| **DetA** | **40.4** | 38.0 (**+2.4**) | 41.0 (-0.6) |
+| **MOTP** | **78.6** | 76.5 (**+2.1**) | 77.2 (+1.4) |
+| MOTA | 44.6 | 44.9 (-0.3) | 49.5 (-4.9) |
+| IDF1 | 59.7 | 62.4 (-2.7) | 66.0 (-6.3) |
+| IDs | 317 | 178 | 161 |
+
+**On VisDrone the reproduction now ties the published JMDST on MOTA (44.6 vs
+44.9) and beats it on HOTA, AssA, DetA and MOTP — and edges QDTrack, the
+strongest baseline in the paper's own Table 6, on HOTA and AssA.** ID switches
+remain the standing weakness (317 vs 178).
+
+| UAVDT | ours (test) | paper JMDST |
+|---|---:|---:|
+| HOTA | 47.8 | 60.1 (-12.3) |
+| MOTA | 55.4 | 67.3 (-11.9) |
+| DetA | 48.7 | 59.0 (-10.3) |
+| AssA | 47.1 | 61.3 (-14.2) |
+
+UAVDT still trails on every metric. **Splits are not the paper's**, so none of
+this is like-for-like.
+
+### Appearance vs IoU — fifth confirmation
+
+UAVDT HOTA 47.8 vs 40.6 (**+7.2**), IDs 637 vs 2258 (-72%); VisDrone 49.3 vs
+46.0 (+3.3), IDs 317 vs 734 (-57%). The negative result has now held on val
+and test, before and after every upgrade.
+
+### Speed
+
+**UAVDT 26.9 FPS now exceeds the paper's 26.6.** VisDrone 15.6 vs 18.6 remains
+below — CMC runs every frame and yolo11m is heavier than yolo11n.
+
+### Per-sequence (IoU-only)
+
+| UAVDT test | MOTA | | VisDrone test | MOTA |
+|---|---:|---|---|---:|
+| M0703 | **74.9** | | uav0000308_00000_v | **76.6** |
+| M0101 | 74.3 | | uav0000306_00230_v | 67.4 |
+| M0603 | 71.3 | | uav0000316_01288_v | 56.5 |
+| M1301 | 55.4 | | uav0000315_00000_v | 52.8 |
+| M1006 | 43.3 | | uav0000119_02301_v | 51.1 |
+| M1009 | 17.2 | | uav0000124_00944_v | 43.0 |
+| M1004 | 16.1 | | uav0000281_00460_v | 34.7 |
+| M0210 | 2.1 | | uav0000370_00001_v | 19.1 |
+| | | | uav0000263_03289_v | 6.4 |
+| | | | uav0000073_00600_v | 0.0\* |
+
+\* 13 GT objects in the whole sequence.
+
+Artifacts: `outputs/test_byte_{iou,app}/{uavdt,visdrone}.{md,json}`.
+
 ## BYTE upgrade, Phase 2 — two-stage association (2026-08-11)
 
 ByteTrack's second association stage (`--byte`): keep detections down to
@@ -307,8 +386,26 @@ VisDrone FPS is unchanged at 20.5 despite processing far more detections.
 sequences. 136 tests pass, including the invariant that a frame of nothing but
 weak boxes creates no tracks.
 
-**Still open**: the strong threshold (`--conf 0.55`) has not been re-swept
-since BYTE changed what it means.
+### Strong-threshold re-sweep after BYTE — 0.55 CONFIRMED
+
+BYTE changed what `--conf` means: it is now the *split point* between the
+strong and weak pools, not the discard point, so its previous tuning could not
+be assumed to carry over. Re-swept with `--byte-low-conf 0.4` fixed.
+
+| conf | UAVDT HOTA | VD HOTA | worst-case | UAVDT MOTA | VD MOTA | UAVDT IDs | VD IDs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0.45 | 45.6 | 51.4 | 45.6 | 20.8 | 56.0 | 80 | 615 |
+| 0.50 | 45.9 | 51.6 | 45.9 | 22.8 | 55.7 | 72 | 564 |
+| **0.55** | **46.6** | **51.8** | **46.6** | 25.7 | 56.3 | 60 | 519 |
+| 0.60 | 45.9 | 51.1 | 45.9 | 27.3 | 55.7 | 47 | 485 |
+| 0.65 | 46.2 | 51.2 | 46.2 | **30.0** | **56.5** | **42** | **402** |
+
+**0.55 is optimal for each dataset independently** — it is the maximum of both
+HOTA columns, not merely the best compromise — so the final system still
+carries **no threshold deviation from the paper**. Note the familiar MOTA/HOTA
+split: UAVDT MOTA keeps climbing to 0.65 (30.0) as FP falls, while HOTA peaks
+at 0.55; MOTA rewards FP suppression, HOTA balances it against the FN it costs
+(7845 vs 6670).
 
 ## BYTE upgrade, Phase 1 — skip unused embeddings (2026-08-11)
 
