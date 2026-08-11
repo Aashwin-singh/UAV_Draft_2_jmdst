@@ -316,5 +316,87 @@ class OutputFilteringTests(unittest.TestCase):
         self.assertEqual(kept_ids, {2, 3})  # #1 dropped in favor of higher-conf #2
 
 
+class ByteAssociationTests(unittest.TestCase):
+    """ByteTrack's second stage: weak boxes continue tracks, never start them."""
+
+    BOX = np.array([100.0, 100.0, 40.0, 40.0])
+
+    def _confirmed_tracker(self, **kwargs) -> Tracker:
+        """A tracker holding one confirmed track on BOX."""
+
+        tracker = Tracker(tau=3, use_appearance=False, **kwargs)
+        for _ in range(5):  # N = tau + 1 = 4 to confirm, plus one
+            tracker.predict()
+            tracker.update([Detection(self.BOX.copy(), 0.9)])
+        self.assertTrue(tracker.tracks and tracker.tracks[0].is_confirmed())
+        return tracker
+
+    def test_low_detections_never_create_tracks(self) -> None:
+        # The whole safety property: a frame of nothing but weak boxes, far
+        # from any track, must not spawn anything.
+        tracker = Tracker(tau=3, use_appearance=False, use_byte=True)
+        tracker.predict()
+        tracker.update([], [Detection(np.array([10.0, 10.0, 30.0, 30.0]), 0.2)])
+        self.assertEqual(len(tracker.tracks), 0)
+
+    def test_low_detection_keeps_a_confirmed_track_alive(self) -> None:
+        tracker = self._confirmed_tracker(use_byte=True)
+        track = tracker.tracks[0]
+        tracker.predict()
+        tracker.update([], [Detection(self.BOX.copy(), 0.2)])
+
+        self.assertEqual(track.time_since_update, 0)
+        self.assertTrue(track.is_confirmed())
+
+    def test_without_byte_the_same_frame_is_a_miss(self) -> None:
+        tracker = self._confirmed_tracker(use_byte=False)
+        track = tracker.tracks[0]
+        tracker.predict()
+        tracker.update([], [Detection(self.BOX.copy(), 0.2)])
+
+        # low_detections must be ignored entirely when BYTE is off.
+        self.assertEqual(track.time_since_update, 1)
+
+    def test_spatially_distant_low_detection_is_rejected(self) -> None:
+        tracker = self._confirmed_tracker(use_byte=True)
+        track = tracker.tracks[0]
+        tracker.predict()
+        tracker.update([], [Detection(np.array([600.0, 600.0, 40.0, 40.0]), 0.2)])
+
+        self.assertEqual(track.time_since_update, 1)
+
+    def test_tentative_tracks_are_not_rescued(self) -> None:
+        # Letting weak evidence carry a tentative track toward confirmation
+        # would undermine the paper's N = tau+1 rule.
+        tracker = Tracker(tau=3, use_appearance=False, use_byte=True)
+        tracker.predict()
+        tracker.update([Detection(self.BOX.copy(), 0.9)])
+        track = tracker.tracks[0]
+        self.assertTrue(track.is_tentative())
+
+        tracker.predict()
+        tracker.update([], [Detection(self.BOX.copy(), 0.2)])
+        # Unmatched unconfirmed tracks are deleted immediately (A.6 step 5).
+        self.assertEqual(len(tracker.tracks), 0)
+
+    def test_strong_detections_still_take_priority(self) -> None:
+        tracker = self._confirmed_tracker(use_byte=True)
+        track = tracker.tracks[0]
+        strong = self.BOX + np.array([5.0, 0.0, 0.0, 0.0])
+        tracker.predict()
+        tracker.update([Detection(strong, 0.9)], [Detection(self.BOX.copy(), 0.2)])
+
+        # Matched in stage 1/2; the weak box must not also have been applied.
+        self.assertEqual(track.time_since_update, 0)
+        self.assertEqual(len(tracker.tracks), 1)
+
+    def test_byte_off_is_unaffected_by_the_new_argument(self) -> None:
+        a = self._confirmed_tracker(use_byte=False)
+        b = self._confirmed_tracker(use_byte=False)
+        a.predict(); a.update([Detection(self.BOX.copy(), 0.9)])
+        b.predict(); b.update([Detection(self.BOX.copy(), 0.9)], None)
+        np.testing.assert_allclose(a.tracks[0].bbox_xywh, b.tracks[0].bbox_xywh, atol=1e-12)
+
+
 if __name__ == "__main__":
     unittest.main()

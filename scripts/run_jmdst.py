@@ -56,6 +56,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ablation: disable FELNet-embedding cascade matching (IoU-only association).",
     )
     parser.add_argument(
+        "--byte",
+        action="store_true",
+        help=(
+            "Enable ByteTrack's second association stage: keep detections down to "
+            "--byte-low-conf and match them IoU-only to tracks the normal stages left "
+            "unmatched. Weak boxes can only continue a track, never start one."
+        ),
+    )
+    parser.add_argument(
+        "--byte-low-conf",
+        type=float,
+        default=0.1,
+        help="Lower confidence bound for BYTE's weak pool (--conf stays the strong threshold).",
+    )
+    parser.add_argument(
+        "--byte-iou",
+        type=float,
+        default=0.5,
+        help=(
+            "Max IoU distance for the BYTE stage; 0.5 means IoU >= 0.5. Stricter than "
+            "stage 2's 0.7, since a weak box must agree spatially before it is trusted."
+        ),
+    )
+    parser.add_argument(
         "--cmc",
         action="store_true",
         help=(
@@ -96,9 +120,13 @@ def main() -> None:
 
     from ultralytics import YOLO
 
-    detector = YoloDetector(YOLO(args.yolo), conf=args.conf, iou=args.iou, imgsz=args.imgsz, device=device)
+    # With BYTE the detector must emit the weak band too; JMDSTTracker splits
+    # them at args.conf, so the strong path is bit-identical to BYTE-off.
+    detector_conf = min(args.byte_low_conf, args.conf) if args.byte else args.conf
+    detector = YoloDetector(YOLO(args.yolo), conf=detector_conf, iou=args.iou, imgsz=args.imgsz, device=device)
     localizer = FELNetLocalizer(load_felnet(args.felnet, device=device), device=device)
-    print(f"Loaded YOLO + FELNet on {device}. tau={args.tau}")
+    print(f"Loaded YOLO + FELNet on {device}. tau={args.tau}"
+          + (f", BYTE [{detector_conf}, {args.conf}) -> IoU<={args.byte_iou}" if args.byte else ""))
 
     output_root = Path(args.output_root)
     start = time.perf_counter()
@@ -120,6 +148,9 @@ def main() -> None:
                 use_appearance=not args.no_appearance,
                 use_nsa=args.nsa,
                 nsa_tracking_branch=args.nsa_tracking,
+                use_byte=args.byte,
+                byte_conf_high=args.conf,
+                byte_iou_distance=args.byte_iou,
                 cmc=CameraMotionCompensator(
                     scale=args.cmc_scale, motion_type=args.cmc_motion
                 ) if args.cmc else None,

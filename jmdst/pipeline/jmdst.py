@@ -64,7 +64,15 @@ class JMDSTTracker:
         use_nsa: bool = False,
         nsa_tracking_branch: bool = False,
         cmc: object | None = None,
+        use_byte: bool = False,
+        byte_conf_high: float = 0.55,
+        byte_iou_distance: float = 0.5,
     ) -> None:
+        # With BYTE on, the detector is configured to emit boxes down to the
+        # LOW threshold and this class splits them: >= byte_conf_high behaves
+        # exactly as before, the rest becomes the weak pool for stage 3.
+        self.use_byte = use_byte
+        self.byte_conf_high = byte_conf_high
         # NSA on the tracking branch is a separate switch because the signal it
         # would consume is different in kind. At detection frames the
         # confidence is YOLO's calibrated detector score; on tracking frames it
@@ -83,6 +91,7 @@ class JMDSTTracker:
             tau=tau, d=d, c1=c1, i1=i1, i2=i2,
             max_cosine_distance=max_cosine_distance, max_age=max_age,
             use_appearance=use_appearance, use_nsa=use_nsa,
+            use_byte=use_byte, byte_iou_distance=byte_iou_distance,
         )
         self.frame_index = 0
 
@@ -111,6 +120,20 @@ class JMDSTTracker:
 
     def _detection_frame(self, image: object) -> None:
         raw = list(self.detector(image))
+
+        # BYTE: split the detector's output into the strong pool (business as
+        # usual) and the weak pool (stage-3 rescue only). Without BYTE the
+        # detector is already thresholded and everything is strong.
+        low_detections: list[Detection] = []
+        if self.use_byte:
+            weak = [(b, c) for b, c in raw if float(c) < self.byte_conf_high]
+            raw = [(b, c) for b, c in raw if float(c) >= self.byte_conf_high]
+            # Weak boxes are matched IoU-only by definition, so they never need
+            # an embedding -- no FELNet cost is added by widening the threshold.
+            low_detections = [
+                Detection(np.asarray(b, dtype=np.float64), float(c), None) for b, c in weak
+            ]
+
         boxes = [np.asarray(box, dtype=np.float64) for box, _conf in raw]
         confidences = [float(conf) for _box, conf in raw]
 
@@ -129,7 +152,7 @@ class JMDSTTracker:
             Detection(boxes[i], confidences[i], embeddings[i]) for i in range(len(boxes))
         ]
         self.tracker.predict()
-        self.tracker.update(detections)
+        self.tracker.update(detections, low_detections)
         # Stamp the detection confidence on each matched track for output.
         for track in self.tracker.tracks:
             if track.time_since_update == 0:

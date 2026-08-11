@@ -155,7 +155,20 @@ class Tracker:
         kalman_filter: KalmanFilter | None = None,
         use_appearance: bool = True,
         use_nsa: bool = False,
+        use_byte: bool = False,
+        byte_iou_distance: float = 0.5,
     ) -> None:
+        # BYTE (ByteTrack, ECCV 2022) second association stage. Low-confidence
+        # detections are matched IoU-only to tracks that survived the normal
+        # stages, recovering occluded/blurred targets. They may only *continue*
+        # a track, never start one -- that asymmetry is what makes keeping weak
+        # boxes safe, and is enforced structurally in update(): _initiate_track
+        # is never reachable from the low-score list.
+        # byte_iou_distance defaults to 0.5 (IoU >= 0.5), stricter than stage
+        # 2's 0.7 (IoU >= 0.3), per ByteTrack: a weak box must agree spatially
+        # much more strongly before it is trusted.
+        self.use_byte = use_byte
+        self.byte_iou_distance = byte_iou_distance
         # use_nsa=True scales Kalman measurement noise by (1 - detection
         # confidence), per StrongSORT's NSA filter. Off by default: the paper
         # specifies no Kalman internals, so this is an opt-in improvement kept
@@ -189,8 +202,14 @@ class Tracker:
         for track in self.tracks:
             track.predict(self.kf)
 
-    def update(self, detections: list[Detection]) -> tuple[list, list, list]:
+    def update(
+        self, detections: list[Detection], low_detections: list[Detection] | None = None
+    ) -> tuple[list, list, list]:
         """Run the detection-frame association (A.6 steps 1-7).
+
+        ``low_detections`` are BYTE's low-confidence boxes. They are offered
+        only to tracks left unmatched by the normal stages, and never reach
+        track initiation.
 
         Returns (matches, unmatched_track_indices, unmatched_detection_indices)
         where matches are (track_index, detection_index) pairs, indexing into
@@ -199,6 +218,11 @@ class Tracker:
 
         matches, unmatched_tracks, unmatched_dets = self._match(detections)
 
+        # BYTE stage 3: try to rescue still-unmatched tracks with weak boxes.
+        low_matches: list[tuple[int, int]] = []
+        if self.use_byte and low_detections and unmatched_tracks:
+            low_matches, unmatched_tracks = self._match_low(unmatched_tracks, low_detections)
+
         for ti, di in matches:
             self.tracks[ti].update(
                 self.kf,
@@ -206,8 +230,21 @@ class Tracker:
                 detections[di].embedding,
                 detections[di].confidence if self.use_nsa else None,
             )
+        for ti, di in low_matches:
+            low = low_detections[di]
+            # NSA composes correctly here: a weak box carries a low confidence,
+            # so (1 - c) widens the measurement noise and the filter leans on
+            # its prediction rather than snapping to an uncertain box.
+            self.tracks[ti].update(
+                self.kf,
+                low.bbox_xywh,
+                low.embedding,
+                low.confidence if self.use_nsa else None,
+            )
         for ti in unmatched_tracks:
             self.tracks[ti].mark_missed()
+        # Only high-score detections can seed a track -- low_detections is not
+        # in scope here, which is what keeps BYTE from inventing false tracks.
         for di in unmatched_dets:
             self._initiate_track(detections[di])
 
@@ -258,6 +295,42 @@ class Tracker:
         matches = matches_a + matches_b
         unmatched_tracks = list(set(unmatched_a_stale + unmatched_b))
         return matches, unmatched_tracks, unmatched_dets
+
+    def _match_low(
+        self, unmatched_tracks: list[int], low_detections: list[Detection]
+    ) -> tuple[list[tuple[int, int]], list[int]]:
+        """BYTE stage 3: IoU-only rescue of unmatched tracks by weak detections.
+
+        Restricted to **confirmed** tracks that are still recent
+        (``time_since_update <= tau + 1``, the same recency rule stage 2 uses):
+
+        * Tentative tracks are excluded deliberately. The paper confirms on
+          N = tau+1 consecutive present frames (A.6); letting low-confidence
+          evidence carry a tentative track toward confirmation would weaken
+          exactly the rule that keeps false positives out.
+        * Stale tracks are excluded because a long-missing track will happily
+          latch onto any nearby weak box, which is how BYTE-style recovery
+          turns into identity theft.
+
+        Returns (matches, tracks still unmatched).
+        """
+
+        candidates = [
+            ti for ti in unmatched_tracks
+            if self.tracks[ti].is_confirmed() and self.tracks[ti].time_since_update <= self.tau + 1
+        ]
+        if not candidates:
+            return [], unmatched_tracks
+
+        detection_indices = list(range(len(low_detections)))
+        cost = iou_cost_matrix(self.tracks, low_detections, candidates, detection_indices)
+        matches, _unmatched_c, _unmatched_d = min_cost_matching(
+            cost, self.byte_iou_distance, candidates, detection_indices
+        )
+
+        rescued = {ti for ti, _di in matches}
+        still_unmatched = [ti for ti in unmatched_tracks if ti not in rescued]
+        return matches, still_unmatched
 
     def _initiate_track(self, detection: Detection) -> None:
         track = Track.initiate(

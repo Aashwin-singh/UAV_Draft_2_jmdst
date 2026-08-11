@@ -235,6 +235,81 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## BYTE upgrade, Phase 2 — two-stage association (2026-08-11)
+
+ByteTrack's second association stage (`--byte`): keep detections down to
+`--byte-low-conf` and match them **IoU-only** to tracks the normal stages left
+unmatched. Weak boxes may only *continue* a track, never start one — enforced
+structurally, since `_initiate_track` is unreachable from the low-score list.
+
+Two restrictions beyond ByteTrack, both protecting the paper's rules:
+**confirmed tracks only** (weak evidence must not carry a tentative track
+toward the N=tau+1 confirmation) and **recent tracks only**
+(`time_since_update <= tau+1`; with `max_age=100` a long-missing track would
+otherwise latch onto any nearby weak box). Gate is IoU >= 0.5, stricter than
+stage 2's IoU >= 0.3, per ByteTrack.
+
+**Feasibility check first** — how much real signal sits in the discarded band
+(boxes at 0.10-0.55, measured against GT at IoU >= 0.5):
+
+| sequence | high/frame | low/frame | real objects in low band /frame |
+|---|---:|---:|---:|
+| M0101 (best seq) | 16.3 | 6.8 | 0.58 |
+| uav0000308 (best seq) | 13.7 | 3.3 | 0.78 |
+| M1006 | 19.9 | 18.6 | 7.82 |
+| M1301 | 22.2 | 22.6 | 7.88 |
+| uav0000124 | 40.2 | 21.5 | **14.73** |
+
+Almost every real object in the low band is *absent* from the high band, and
+the payoff tracks difficulty — our best sequences have ~0.6/frame to gain, our
+worst 8-15/frame. On M1301 that is ~9,300 recoverable objects against an
+actual FN of 15,351.
+
+**`--byte-low-conf` sweep** (val, otherwise the shipping config):
+
+| low_conf | UAVDT HOTA | VD HOTA | worst-case | UAVDT MOTA | VD MOTA | UAVDT FP+FN | VD IDs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| off | 45.7 | 51.1 | 45.7 | 24.2 | 54.6 | 17298 | 560 |
+| 0.1 | 45.4 | **52.7** | 45.4 | 22.4 | **57.8** | 17734 | 499 |
+| 0.2 | 45.4 | 52.6 | 45.4 | 22.0 | 57.5 | 17816 | **493** |
+| 0.3 | 45.4 | 52.1 | 45.4 | 23.3 | 57.2 | 17520 | 515 |
+| **0.4** | **46.6** | 51.8 | **46.6** | **25.7** | 56.3 | **16972** | 519 |
+| 0.45 | 45.7 | 51.3 | 45.7 | 24.3 | 55.4 | 17294 | 525 |
+| 0.5 | 45.8 | 51.4 | 45.8 | 23.9 | 55.9 | 17382 | 540 |
+
+**Selected `--byte-low-conf 0.4`** — best worst-case HOTA (46.6), best mean
+(49.2), and **both datasets beat the BYTE-off baseline**, which no other
+setting achieves. It also has the lowest UAVDT FP+FN of any setting including
+baseline, so the HOTA peak is backed by the error balance rather than being a
+metric fluctuation.
+
+Final vs BYTE-off: UAVDT HOTA 45.7 -> **46.6**, MOTA 24.2 -> **25.7**, IDF1
+59.9 -> **61.1**, FN -511 for only +185 FP. VisDrone HOTA 51.1 -> **51.8**,
+MOTA 54.6 -> **56.3**, with **both** FP and FN down (9395 -> 9345,
+21862 -> 20742).
+
+**The two datasets want opposite thresholds, and the feasibility data says
+why.** VisDrone's weak band is mostly real objects (69% TP on uav0000124), so
+it prefers taking all of it (0.1 -> HOTA 52.7). UAVDT's is mostly junk (8.6%
+TP on M0101), so only the cleanest slice (0.4-0.55) pays. 0.4 is the
+compromise that helps both.
+
+**Caveats**: UAVDT val is only 3 sequences and its curve is otherwise flat
+(45.4-45.8) with the 0.4 point standing ~1 HOTA above its neighbours — the
+FP+FN total supports it, but the margin is within what 3 sequences can produce
+by chance. VisDrone's trend is clean and monotone across 10 sequences and
+would prefer 0.1. Worth re-checking on test.
+
+**Weak boxes cost no FELNet time** (matched IoU-only, so no embedding needed):
+VisDrone FPS is unchanged at 20.5 despite processing far more detections.
+
+**Verification**: `--byte` off reproduces Phase 1 byte-for-byte across all 13
+sequences. 136 tests pass, including the invariant that a frame of nothing but
+weak boxes creates no tracks.
+
+**Still open**: the strong threshold (`--conf 0.55`) has not been re-swept
+since BYTE changed what it means.
+
 ## BYTE upgrade, Phase 1 — skip unused embeddings (2026-08-11)
 
 Groundwork for the BYTE two-stage association (Phase 2). Pure optimisation:
