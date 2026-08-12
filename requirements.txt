@@ -1,11 +1,25 @@
-numpy
-pandas
-Pillow
-scipy
-PyYAML
-tqdm
-opencv-python
-motmetrics
-torch
-torchvision
-ultralytics
+# pip-only install (see environment.yml for the conda route).
+#
+#   pip install -r requirements.txt
+#
+# The --extra-index-url line is required: PyPI's default torch is a CPU build,
+# and on CPU the pipeline runs far below real time. The +cu128 local version
+# specifiers resolve only from PyTorch's index, which is what forces the GPU
+# build. Check the result with `python scripts/preflight.py`.
+#
+# Pinned to the versions the reported results were produced with.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+ultralytics==8.4.104
+numpy==2.4.4
+scipy==1.17.1
+pandas==3.0.3
+Pillow==12.2.0
+opencv-python==5.0.0.*
+motmetrics==1.4.0
+PyYAML==6.0.3
+tqdm==4.69.0
+matplotlib

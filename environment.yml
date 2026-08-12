@@ -1,27 +1,45 @@
+# Conda environment for the JMDST reproduction.
+#
+#   conda env create -f environment.yml
+#   conda activate jmdst
+#
+# Versions below are the ones the reported results were produced with
+# (RTX 4070 Laptop, CUDA 12.8). Recreate with these before comparing numbers.
+#
+# CUDA MATTERS. PyPI's default `torch` is a CPU build; on CPU the pipeline runs
+# far below real time and the live demo is unusable. The `+cu128` local version
+# specifiers below only exist on PyTorch's own index, so the extra-index-url is
+# what makes pip resolve the GPU build rather than silently taking the CPU one.
+# Verify after install with `python scripts/preflight.py`.
+
 name: jmdst
 
 channels:
-  - pytorch
   - conda-forge
   - defaults
 
 dependencies:
-  - python=3.10
+  - python=3.11
   - pip
-  - numpy
-  - pandas
-  - pillow
-  - scipy
-  - pyyaml
-  - tqdm
-  - opencv
-  - matplotlib
-  - pytorch
-  - torchvision
   - pip:
-      - ultralytics
-      - motmetrics
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.11.0+cu128
+      - torchvision==0.26.0+cu128
+      - ultralytics==8.4.104
+      - numpy==2.4.4
+      - scipy==1.17.1
+      - pandas==3.0.3
+      - pillow==12.2.0
+      - opencv-python==5.0.0.*
+      - motmetrics==1.4.0
+      - pyyaml==6.0.3
+      - tqdm==4.69.0
+      - matplotlib
 
 # Notes:
-# - mamba-ssm is intentionally omitted for now; install it later when MSFP is implemented.
-# - For CUDA through conda, add a compatible pytorch-cuda package from the pytorch/nvidia channels.
+# - Everything is installed via pip rather than mixing conda and pip packages,
+#   which is what previously let a CPU torch shadow the CUDA one.
+# - motmetrics 1.4 predates NumPy 2 and calls np.asfarray; jmdst/eval/metrics.py
+#   installs a shim before importing it. Do not "fix" that by downgrading NumPy.
+# - mamba-ssm is intentionally absent: Phase 6 (MSFP) is not implemented, and
+#   its PyPI sdist ships without the CUDA sources its own setup.py requires.

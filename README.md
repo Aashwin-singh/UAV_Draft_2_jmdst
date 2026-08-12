@@ -98,6 +98,27 @@ Expect no boxes for the first few frames of any clip: a tracklet is only
 emitted once confirmed, which needs N = τ+1 = 4 consecutive present frames.
 That is the paper's rule (A.6), not a defect.
 
+### Presenting it
+
+`demo_package/` is the portable bundle — see `demo_package/README.md`. Check
+readiness first:
+
+```powershell
+python scripts/preflight.py --source demo_package/clips/uavdt_M0101.mp4
+```
+
+**Do not demo from `data/unified/...`.** Those directories hold annotations
+only, and the image paths inside them are *absolute*, so they resolve on the
+machine that built the dataset and nowhere else. Export a self-contained clip
+instead:
+
+```powershell
+python scripts/export_demo_clip.py --source data/unified/uavdt/test/M0101 --output demo_package/clips/uavdt_M0101.mp4 --max-frames 400
+```
+
+Clips also run faster than the unified directories (mp4 decode beats per-frame
+JPEG): 31–54 FPS end-to-end versus ~19.
+
 ## Implemented So Far
 
 - VisDrone2019-MOT converter.

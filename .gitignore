@@ -53,3 +53,16 @@ outputs/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Demo package: the README and launcher are code, the media is regenerable.
+# Clips come from scripts/export_demo_clip.py, pre-rendered ones from
+# scripts/demo.py --output. Checkpoints are copied in per demo_package/README.md.
+# Root-anchored, per the invariant in ARCHITECTURE.md.
+/demo_package/clips/
+/demo_package/prerendered/
+# The unanchored `checkpoints/` above matches at any depth, and git will not
+# descend into an excluded DIRECTORY -- so the directory must be un-ignored
+# before a file inside it can be. Same root-anchoring trap as invariant 11.
+!/demo_package/checkpoints/
+/demo_package/checkpoints/*
+!/demo_package/checkpoints/.gitkeep
