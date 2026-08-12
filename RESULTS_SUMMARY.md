@@ -137,6 +137,13 @@ VisDrone HOTA **+0.3** (49.3 vs 49.0) and AssA **+1.7** (60.6 vs 58.9).
 
 0.55 is the maximum of both HOTA columns independently, not a compromise.
 
+### 3.6 CMC motion model (val, conf 0.55)
+
+| Model | UAVDT HOTA | VisDrone HOTA | VisDrone IDs | VisDrone FPS |
+|---|---:|---:|---:|---:|
+| **Euclidean (selected)** | **45.7** | 51.1 | 560 | **16.5** |
+| Affine | 45.4 | **51.3** | **545** | 15.4 |
+
 ### 3.7 BYTE low-confidence band sweep (val)
 
 | `--byte-low-conf` | UAVDT HOTA | VisDrone HOTA | UAVDT MOTA | VisDrone MOTA | UAVDT FP+FN |
@@ -162,13 +169,6 @@ Detections at 0.10–0.55, scored against ground truth at IoU ≥ 0.5.
 | M1006 | 19.9 | 18.6 | 7.82 |
 | M1301 | 22.2 | 22.6 | 7.88 |
 | uav0000124_00944_v | 40.2 | 21.5 | **14.73** |
-
-### 3.6 CMC motion model (val, conf 0.55)
-
-| Model | UAVDT HOTA | VisDrone HOTA | VisDrone IDs | VisDrone FPS |
-|---|---:|---:|---:|---:|
-| **Euclidean (selected)** | **45.7** | 51.1 | 560 | **16.5** |
-| Affine | 45.4 | **51.3** | **545** | 15.4 |
 
 ---
 
@@ -199,6 +199,28 @@ were available, so "off" here means no appearance model at all.
 |---|---:|---:|
 | `full_run` + appearance | 38.9 | 39.6 |
 | `lambda_e30` + appearance | 39.2 | 39.2 |
+
+### 4.2 ID-switch attribution (test, final config)
+
+Per GT track, following which predicted ID is matched to it frame by frame.
+`gap = 0` means the object was matched on both sides of the ID change
+(association failure); `gap >= 1` means it went unmatched first (detection
+failure).
+
+| Split | association (gap=0) | detection (gap≥1) | association share |
+|---|---:|---:|---:|
+| UAVDT test | 38 | 603 | **5.9 %** |
+| VisDrone test | 59 | 270 | **17.9 %** |
+
+GT displacement at the switch, in box heights:
+
+| | UAVDT median / p90 | VisDrone median / p90 |
+|---|---|---|
+| association switches | 0.04 / 0.12 | 0.02 / 0.10 |
+| detection switches | 0.20 / 1.76 | 0.36 / 5.05 |
+
+Gap distribution peaks at 4–5 frames (N = τ+1 = 4 confirmation latency) with a
+second mass at 10+ frames (re-identification after long absence).
 
 ---
 
@@ -279,6 +301,7 @@ embedding dim 16, SSI 64×64.
 |---|---|
 | Phases 1–5, 7–11 | Complete, verified, committed |
 | Phase 6 (MSFP) | Not implemented — `mamba-ssm` PyPI sdist ships without its CUDA sources |
+| Adaptive process noise (SAKF-RCE) | Not implemented — ruled out by §4.2: only 5.9/17.9 % of ID switches are association failures, and those occur at ~0.03 box-heights displacement |
 | Unit tests | 136 passing |
 | Splits held out | Test split used once, after config was frozen on val |
 

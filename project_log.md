@@ -235,6 +235,65 @@ without `--optimizer`. Two related confounds, documented in its docstring:
 changes `momentum` (0.937 vs auto's 0.9) and `warmup_bias_lr` (0.1 vs auto's
 0.0), the latter governing exactly the early epochs that matter here.
 
+## ID-switch error analysis (2026-08-11) — Phase 4 RULED OUT
+
+Pre-registered gate for Phase 4 (adaptive process noise / SAKF-RCE): pursue
+"only if ID switches are dominated by motion rather than detection gaps". Ran
+the analysis rather than judging it.
+
+**Method**: for each GT track, follow which predicted ID is matched to it
+(Hungarian, IoU >= 0.5, ignore regions applied) frame by frame. When the
+predicted ID changes, measure the gap:
+
+* `gap == 0` — matched on **both** sides of the change: the object was visible
+  and tracked throughout and the identity still broke. **Association failure**
+  — the only kind an adaptive filter could address.
+* `gap >= 1` — the object went unmatched for N frames first, then returned
+  under a new ID. **Detection failure** — no measurement exists to filter.
+
+| Split | association (gap=0) | detection (gap>=1) | association share |
+|---|---:|---:|---:|
+| UAVDT test | 38 | 603 | **5.9%** |
+| VisDrone test | 59 | 270 | **17.9%** |
+
+**Switches are overwhelmingly detection-driven — 94.1% / 82.1%.**
+
+**The decisive detail is the displacement at each switch**, measured in box
+heights:
+
+| | UAVDT median / p90 | VisDrone median / p90 |
+|---|---|---|
+| association switches | **0.04 / 0.12** | **0.02 / 0.10** |
+| detection switches | 0.20 / 1.76 | 0.36 / 5.05 |
+
+The association failures — the only ones adaptive filtering could touch —
+happen while the target is **essentially stationary** (0.02-0.04 box heights
+between frames). A constant-velocity Kalman filter predicts that perfectly.
+There is no motion-modelling error to correct: adaptive process noise helps
+when motion is *unpredictable*, and here it is maximally predictable. The
+large displacements sit entirely in the detection-gap category, where no
+measurement exists for any filter to weight.
+
+**Phase 4 is not implemented.** Its own gate says no, on both datasets, for
+two independent reasons.
+
+### What the gap distribution says instead
+
+Gaps cluster hard at **4-5 frames** (UAVDT 198 + 142 of 641; VisDrone 51 + 30
+of 329) with a second mass at **10+** (165 / 133). The 4-5 spike is not a
+coincidence: **N = tau + 1 = 4** is the confirmation threshold, so when a track
+dies and the object is re-detected, the replacement track is invisible for
+exactly 4 frames while it confirms. That gap is structural, imposed by the
+paper's own rule (A.6), not by the detector.
+
+The 10+ mass is the real re-identification problem: an object vanishes for
+many frames and must be reconnected on return. **That is precisely the job an
+appearance embedding exists to do**, and this project has already established
+across two loss-rebalancing attempts that ours cannot — different-identity
+similarity is pinned at 0.105-0.126 regardless of lambda1. The remaining ID
+switches therefore need a capability we have measured as unavailable, which
+closes the loop on the appearance findings rather than opening a new lever.
+
 ## FINAL HELD-OUT TEST — with BYTE (2026-08-11)
 
 Config frozen from val: `retrain_aug_m_lowlr` + `full_run` + IoU-only +
