@@ -56,6 +56,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--taus", nargs="+", type=int, default=[1, 2, 3, 4, 5, 6])
     parser.add_argument("--out", default="outputs/ablations")
     parser.add_argument("--skip-appearance-ablation", action="store_true")
+    parser.add_argument(
+        "--shipping-config",
+        action="store_true",
+        help=(
+            "Sweep the configuration we actually ship (--nsa --cmc --byte), rather than "
+            "the bare paper baseline this script defaulted to before those existed. "
+            "Use this for any table meant to match RESULTS_SUMMARY.md."
+        ),
+    )
+    parser.add_argument("--byte-low-conf", type=float, default=0.4)
     parser.add_argument("--report", default=None, help="Markdown report path (default: <out>/report.md).")
     return parser
 
@@ -74,6 +84,8 @@ def run_config(args, name: str, tau: int, no_appearance: bool) -> dict:
     ]
     if no_appearance:
         cmd.append("--no-appearance")
+    if getattr(args, "shipping_config", False):
+        cmd += ["--nsa", "--cmc", "--byte", "--byte-low-conf", str(args.byte_low_conf)]
 
     start = time.perf_counter()
     subprocess.run(cmd, check=True, capture_output=True, text=True)
