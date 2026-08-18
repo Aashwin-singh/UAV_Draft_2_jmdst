@@ -66,3 +66,6 @@ Thumbs.db
 !/demo_package/checkpoints/
 /demo_package/checkpoints/*
 !/demo_package/checkpoints/.gitkeep
+
+# Handover snapshots: regenerable evidence artifacts, HANDOVER.md is the doc.
+/handover/snapshots/
