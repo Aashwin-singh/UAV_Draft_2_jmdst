@@ -564,6 +564,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip generating in-memory SSI crops. Faster, but does not verify 64x64 SSI output.",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help=(
+            "Print a compact pass/fail verdict instead of the full markdown report. "
+            "The full report is ~600 lines, which is unreadable in a terminal."
+        ),
+    )
     parser.add_argument("--report-path", default=None, help="Optional markdown report path.")
     parser.add_argument("--json-path", default=None, help="Optional JSON details path.")
     parser.add_argument("--sample-limit", type=int, default=20)
@@ -598,7 +606,35 @@ def main() -> None:
         split=args.split,
         sample_limit=args.sample_limit,
     )
-    print(report)
+    if args.summary:
+        checks = [
+            ("Missing images", stats.missing_images),
+            ("Missing annotations", stats.missing_annotations),
+            ("Corrupted files", stats.corrupted_files),
+            ("Invalid bounding boxes", stats.invalid_bboxes),
+            ("Out-of-bounds bounding boxes", stats.out_of_bounds_bboxes),
+            ("Invalid SSI crops", stats.invalid_ssi_crops),
+            ("Parse errors", stats.parse_errors),
+        ]
+        print()
+        print("=" * 58)
+        print("DATASET VERIFICATION SUMMARY")
+        print("=" * 58)
+        print(f"  sequences            : {stats.valid_sequences} of {stats.sequence_dirs}")
+        print(f"  frames               : {stats.frames}")
+        print(f"  annotations          : {stats.annotations}")
+        print(f"  unique track ids     : {stats.unique_track_ids}")
+        print("-" * 58)
+        for label, issues in checks:
+            print(f"  {label:<30}: {len(issues):>6}   {'ok' if not issues else 'FAILED'}")
+        # Track-id reuse across sequences is expected in MOT data (ids restart
+        # per sequence), so it is reported but does not gate readiness.
+        print(f"  {'Track inconsistencies (info)':<30}: {len(stats.track_inconsistencies):>6}")
+        print("=" * 58)
+        print("ALL CHECKS PASSED" if stats.ready_for_yolov11 else "CHECKS FAILED")
+        print("=" * 58)
+    else:
+        print(report)
 
     if args.report_path:
         report_path = Path(args.report_path)
