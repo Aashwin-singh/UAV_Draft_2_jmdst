@@ -93,6 +93,25 @@ class CropTests(unittest.TestCase):
         for actual, expected in zip(restored, bbox):
             self.assertAlmostEqual(actual, expected)
 
+    def test_crop_handles_non_rgb_input_and_leaves_source_untouched(self) -> None:
+        # crop_ssi only converts when the mode differs (the RGB fast path skips
+        # a full-frame copy per target). Both paths must yield the same RGB SSI,
+        # and the caller's image must never be modified.
+        rgb = Image.new("RGB", (100, 80), (20, 20, 20))
+        ImageDraw.Draw(rgb).rectangle((28, 18, 52, 32), fill=(200, 40, 90))
+        before = rgb.tobytes()
+        bbox = [30, 20, 20, 10]
+        # Overhang the left edge too, so the padded-canvas branch is exercised.
+        for box in (bbox, [-5, 20, 20, 10]):
+            expected, _ = crop_ssi(rgb, box)
+            self.assertEqual(expected.mode, "RGB")
+            for mode in ("RGBA", "P", "L"):
+                source = rgb.convert(mode)
+                actual, _ = crop_ssi(source, box)
+                self.assertEqual(actual.mode, "RGB")
+                self.assertEqual(actual.tobytes(), crop_ssi(source.convert("RGB"), box)[0].tobytes())
+        self.assertEqual(rgb.tobytes(), before)
+
 
 class ConverterAndDatasetTests(unittest.TestCase):
     def test_visdrone_converter_and_datasets(self) -> None:

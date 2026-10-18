@@ -129,7 +129,13 @@ def crop_ssi(
     """Crop a target SSI and resize it to config.output_size x config.output_size."""
 
     config = config or CropConfig()
-    image = image.convert("RGB")
+    # PIL's convert() copies even when the mode already matches. Inference calls
+    # this once per target per frame, so an unconditional convert copied the
+    # whole frame N times a frame -- ~0.5 ms each on a 1024x540 image. The
+    # source is only read below (crop/paste), never mutated, so skipping the
+    # copy cannot change any pixel.
+    if image.mode != "RGB":
+        image = image.convert("RGB")
     window = compute_crop_window(bbox_xywh, config=config, rng=rng)
     x1, y1, x2, y2 = window.xyxy
 
