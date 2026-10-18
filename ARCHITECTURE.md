@@ -10,7 +10,7 @@ this JMDST reproduction. Read alongside:
 
 **Status**: 10 of 11 phases implemented. Only Phase 6 (MSFP) is missing —
 blocked because the PyPI `mamba-ssm` sdist ships without its CUDA sources.
-136 tests pass. Final held-out test results are in `project_log.md`.
+178 tests pass. Final held-out test results are in `project_log.md`.
 
 ---
 
@@ -79,10 +79,23 @@ regenerable. Only code is committed.
 | `jmdst/pipeline/jmdst.py` | **the dual-branch loop** (`JMDSTTracker`) | Algorithm 1 |
 | `jmdst/pipeline/models.py` | YOLO/FELNet adapters + `build_jmdst()` | — |
 | `jmdst/eval/` | CLEAR MOT + IDF1 (motmetrics) and HOTA (own impl) | Sec. 3.2 |
+| `jmdst/net/link.py` | edge/ground sim: netem-equivalent link model (delay, jitter, rate, buffer, random/GE loss), netem-syntax parser | — |
+| `jmdst/net/relay.py` | UDP relay applying one link model per direction, per-packet telemetry, Windows timer handling | — |
+| `jmdst/net/protocol.py` | edge<->ground wire format: MTU fragmentation (no retransmission), frame codecs, bit-exact detection replies | — |
+| `jmdst/net/nodes.py` | `RemoteDetector` (edge: a drop-in `detector` that returns `None` on loss/deadline) and `GroundServer` | — |
+| `jmdst/sim/hardware.py` | edge compute limits via one Windows Job Object: CPU hard cap, core affinity, memory; children break away | — |
+| `jmdst/sim/camera.py` | real-time camera (own process, shared-memory ring, seqlock) and `latest_finished` streaming scoring | — |
+| `jmdst/pipeline/cli.py` | tracker options shared by `run_jmdst.py` and `edge_node.py`, so both build an identical tracker | — |
 
 `jmdst/pipeline/jmdst.py` takes `detector` and `localizer` as **injected
 callables**, so the branch logic is unit-testable with mocks and models are
 swappable without touching orchestration. Preserve that seam.
+
+The edge/ground simulation uses exactly that seam: the edge's `detector` is a
+`RemoteDetector` that ships the frame to the ground. A detector may return
+**`None` ("no result for this frame") as distinct from `[]` ("looked, found
+nothing")**; on `None` the frame runs the tracking branch instead. Don't
+collapse the two -- `[]` at a detection frame unmatches every track.
 
 ---
 
@@ -128,18 +141,41 @@ plausible-looking but wrong numbers rather than a crash.
 11. **`.gitignore` dataset patterns must stay root-anchored** (`/data/`, not
     `data/`). An unanchored `data/` once shadowed `jmdst/data/` and kept the
     entire source package out of git.
+12. **Windows ignores a background process's 1 ms timer request after ~2 s.**
+    `timeBeginPeriod(1)` alone works in short tests, then a mostly-idle
+    windowless process is throttled back to ~15.6 ms wake-ups. Sparse
+    traffic then gets released up to ~14 ms late while busy traffic looks
+    fine. Any simulation process that sleeps must use
+    `jmdst.net.high_resolution_timer`, which also opts out of that throttling.
+13. **In real time, the tau schedule counts processed frames, not camera
+    frames.** `JMDSTTracker.skip_frame()` coasts tracks (Kalman predict) for a
+    frame the edge was too busy for but does not advance `frame_index`.
+    Scheduling on camera frames lets a steadily overloaded edge alias onto, or
+    straight past, the detection frames.
+14. **Real-time results are scored with the streaming-perception rule**
+    (`jmdst.sim.latest_finished`): camera frame j shows the newest result
+    *finished* by its capture time, so even a fast edge shows the previous
+    frame. Compare real-time numbers with real-time numbers. Compare a codec
+    with the same codec too: JPEG q90 alone costs 0.8 HOTA on UAVDT val.
 
 ---
 
 ## Running things
 
 ```bash
-python -m unittest discover -s tests          # 136 tests; use discover, not -m unittest tests.x
+python -m unittest discover -s tests          # 178 tests; use discover, not -m unittest tests.x
 python scripts/run_jmdst.py --yolo <w> --felnet <c> --datasets uavdt --split val --tau 3
 python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val
 python scripts/run_ablations.py --datasets uavdt --split val
 python scripts/make_presentation_figures.py && python scripts/build_report.py
 python scripts/demo.py --source <video|frames|seq-dir> --output out.mp4   # live demo
+python scripts/calibrate_link.py                # link emulator: configured vs measured, exits 1 on failure
+python scripts/run_sim.py --yolo <w> --felnet <c> --e2g "<netem>" --g2e "<netem>" --output-root <dir> <edge args>   # ground + link + edge
+python scripts/ground_node.py --yolo <w>        # or run the three nodes in three terminals:
+python scripts/link_relay.py --e2g "<netem>" --g2e "<netem>"
+python scripts/edge_node.py --felnet <c> <same tracker args as run_jmdst.py>
+python scripts/verify_realtime_replay.py --run <run_sim output> --dataset uavdt   # real-time run must replay byte-identically
+python scripts/link_relay.py --e2g "delay 40ms rate 8mbit loss 1%" --g2e "delay 40ms"   # run the emulator
 ```
 
 `scripts/demo.py` is the presentation path: video/frame in, rendered boxes and

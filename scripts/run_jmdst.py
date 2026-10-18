@@ -32,9 +32,8 @@ if str(PROJECT_ROOT) not in sys.path:
 import torch
 
 from jmdst.data.io import iter_sequence_dirs, read_sequence, resolve_image_path
-from jmdst.pipeline import JMDSTTracker
+from jmdst.pipeline.cli import add_tracker_arguments, detector_conf, mot_lines, tracker_from_args
 from jmdst.pipeline.models import FELNetLocalizer, YoloDetector, load_felnet
-from jmdst.tracking import CameraMotionCompensator
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,70 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", default="outputs/jmdst_results")
     parser.add_argument("--datasets", nargs="+", default=["visdrone", "uavdt"])
     parser.add_argument("--split", default="val")
-    parser.add_argument("--tau", type=int, default=3)
-    parser.add_argument("--conf", type=float, default=0.55)
-    parser.add_argument("--iou", type=float, default=0.2)
-    parser.add_argument("--imgsz", type=int, default=640)
-    parser.add_argument("--max-cosine-distance", type=float, default=0.3)
-    parser.add_argument(
-        "--no-appearance",
-        action="store_true",
-        help="Ablation: disable FELNet-embedding cascade matching (IoU-only association).",
-    )
-    parser.add_argument(
-        "--byte",
-        action="store_true",
-        help=(
-            "Enable ByteTrack's second association stage: keep detections down to "
-            "--byte-low-conf and match them IoU-only to tracks the normal stages left "
-            "unmatched. Weak boxes can only continue a track, never start one."
-        ),
-    )
-    parser.add_argument(
-        "--byte-low-conf",
-        type=float,
-        default=0.1,
-        help="Lower confidence bound for BYTE's weak pool (--conf stays the strong threshold).",
-    )
-    parser.add_argument(
-        "--byte-iou",
-        type=float,
-        default=0.5,
-        help=(
-            "Max IoU distance for the BYTE stage; 0.5 means IoU >= 0.5. Stricter than "
-            "stage 2's 0.7, since a weak box must agree spatially before it is trusted."
-        ),
-    )
-    parser.add_argument(
-        "--cmc",
-        action="store_true",
-        help=(
-            "Enable ECC camera-motion compensation: align each frame to the previous "
-            "one and warp all track states into the current coordinate frame. Targets "
-            "the UAV-maneuver failure mode the paper documents in Sec. 3.5.4."
-        ),
-    )
-    parser.add_argument("--cmc-scale", type=float, default=0.25, help="Downscale factor for ECC estimation (speed/accuracy trade).")
-    parser.add_argument("--cmc-motion", default="euclidean", choices=["euclidean", "affine"], help="ECC motion model.")
-    parser.add_argument(
-        "--nsa",
-        action="store_true",
-        help=(
-            "Enable StrongSORT's NSA Kalman filter at DETECTION frames: scale measurement "
-            "noise by (1 - YOLO confidence) so confident detections pull the state harder. "
-            "The paper specifies no Kalman internals, so this is an opt-in improvement."
-        ),
-    )
-    parser.add_argument(
-        "--nsa-tracking",
-        action="store_true",
-        help=(
-            "Also apply NSA on tracking-branch updates, using FELNet's anchor confidence. "
-            "Measured worse (-1.6 HOTA on both datasets, 2026-08-10): that confidence "
-            "reports anchor coverage, not localization accuracy, so it is the wrong signal. "
-            "Kept for reproducibility of that ablation."
-        ),
-    )
+    add_tracker_arguments(parser)
     parser.add_argument("--device", default=None)
     parser.add_argument("--max-frames", type=int, default=None, help="Cap frames per sequence (debugging).")
     return parser
@@ -120,13 +56,11 @@ def main() -> None:
 
     from ultralytics import YOLO
 
-    # With BYTE the detector must emit the weak band too; JMDSTTracker splits
-    # them at args.conf, so the strong path is bit-identical to BYTE-off.
-    detector_conf = min(args.byte_low_conf, args.conf) if args.byte else args.conf
-    detector = YoloDetector(YOLO(args.yolo), conf=detector_conf, iou=args.iou, imgsz=args.imgsz, device=device)
+    det_conf = detector_conf(args)
+    detector = YoloDetector(YOLO(args.yolo), conf=det_conf, iou=args.iou, imgsz=args.imgsz, device=device)
     localizer = FELNetLocalizer(load_felnet(args.felnet, device=device), device=device)
     print(f"Loaded YOLO + FELNet on {device}. tau={args.tau}"
-          + (f", BYTE [{detector_conf}, {args.conf}) -> IoU<={args.byte_iou}" if args.byte else ""))
+          + (f", BYTE [{det_conf}, {args.conf}) -> IoU<={args.byte_iou}" if args.byte else ""))
 
     output_root = Path(args.output_root)
     start = time.perf_counter()
@@ -142,19 +76,7 @@ def main() -> None:
             info, records = read_sequence(sequence_dir)
             image_size = (info.image_width, info.image_height)
             # Fresh pipeline per sequence (reuses the loaded models).
-            jmdst = JMDSTTracker(
-                detector, localizer, tau=args.tau,
-                max_cosine_distance=args.max_cosine_distance,
-                use_appearance=not args.no_appearance,
-                use_nsa=args.nsa,
-                nsa_tracking_branch=args.nsa_tracking,
-                use_byte=args.byte,
-                byte_conf_high=args.conf,
-                byte_iou_distance=args.byte_iou,
-                cmc=CameraMotionCompensator(
-                    scale=args.cmc_scale, motion_type=args.cmc_motion
-                ) if args.cmc else None,
-            )
+            jmdst = tracker_from_args(args, detector, localizer)
 
             lines: list[str] = []
             frames = records if args.max_frames is None else records[: args.max_frames]
@@ -163,11 +85,7 @@ def main() -> None:
                 t0 = time.perf_counter()
                 outputs = jmdst.process_frame(image, image_size)
                 dataset_seconds += time.perf_counter() - t0
-                for out in outputs:
-                    x, y, w, h = out.bbox_xywh
-                    lines.append(
-                        f"{record.frame_id},{out.track_id},{x:.2f},{y:.2f},{w:.2f},{h:.2f},{out.confidence:.4f},-1,-1,-1"
-                    )
+                lines.extend(mot_lines(record.frame_id, outputs))
                 total_frames += 1
                 dataset_frames += 1
 

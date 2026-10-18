@@ -5,8 +5,13 @@ per-frame tracking branch, driving the Phase 8 Tracker. Model inference is
 injected as two callables so the branch logic (the paper's contribution) is
 testable without YOLO/FELNet:
 
-    detector(image) -> list[(bbox_xywh, confidence)]
+    detector(image) -> list[(bbox_xywh, confidence)] | None
         multi-object detection results (YOLOv11 + NMS/conf post-processing).
+        ``None`` means *no result is available* for this frame -- e.g. a
+        remote detector whose reply was lost or missed its deadline -- and is
+        distinct from ``[]`` ("looked, found nothing"). On ``None`` the frame
+        runs the tracking branch instead, the paper's own mechanism for
+        carrying targets through a missed detection.
 
     localizer(image, list[bbox_xywh])
         -> list[(embedding, refined_bbox_xywh, felnet_confidence)]
@@ -28,7 +33,7 @@ import numpy as np
 
 from jmdst.tracking import Detection, Tracker, TrackingOutput, filter_tracking_outputs
 
-Detector = Callable[[object], Sequence[tuple[np.ndarray, float]]]
+Detector = Callable[[object], Sequence[tuple[np.ndarray, float]] | None]
 Localizer = Callable[[object, Sequence[np.ndarray]], Sequence[tuple[np.ndarray, np.ndarray, float]]]
 
 
@@ -94,8 +99,25 @@ class JMDSTTracker:
             use_byte=use_byte, byte_iou_distance=byte_iou_distance,
         )
         self.frame_index = 0
+        self.unavailable_detection_frames = 0  # detector returned None
+        self.skipped_frames = 0  # camera frames the caller could not process
+        self.last_branch: str | None = None  # "detect" | "track" | "fallback"
 
     # -- public API ---------------------------------------------------------
+
+    def skip_frame(self) -> None:
+        """A camera frame passed that will not be processed (real-time overload).
+
+        Coasts every track one frame on the Kalman motion model, so motion and
+        uncertainty stay in step with camera time across the gap. Nothing else
+        runs and nothing is output. ``frame_index`` -- and so the tau schedule
+        -- counts *processed* frames only: scheduling on camera frames would
+        let a steadily overloaded edge alias onto, or entirely past, the
+        detection frames.
+        """
+
+        self.tracker.predict()
+        self.skipped_frames += 1
 
     def process_frame(self, image: object, image_size: tuple[float, float]) -> list[ConfirmedOutput]:
         """Process one frame; return its confirmed-state tracklet outputs."""
@@ -110,16 +132,27 @@ class JMDSTTracker:
                 self.cmc.apply(self.tracker.tracks, warp)
 
         if self.frame_index % self.tau == 0:
-            self._detection_frame(image)
+            raw = self.detector(image)
+            if raw is None:
+                # No detection result for this frame (e.g. a remote detector's
+                # reply was lost or late). Fall back to the tracking branch so
+                # Kalman + FELNet carry every target through the gap; the next
+                # detection frame stays on the fixed tau schedule.
+                self.unavailable_detection_frames += 1
+                self.last_branch = "fallback"
+                self._tracking_frame(image, image_size)
+            else:
+                self.last_branch = "detect"
+                self._detection_frame(image, list(raw))
         else:
+            self.last_branch = "track"
             self._tracking_frame(image, image_size)
         self.frame_index += 1
         return self._confirmed_outputs()
 
     # -- branches -----------------------------------------------------------
 
-    def _detection_frame(self, image: object) -> None:
-        raw = list(self.detector(image))
+    def _detection_frame(self, image: object, raw: list[tuple[np.ndarray, float]]) -> None:
 
         # BYTE: split the detector's output into the strong pool (business as
         # usual) and the weak pool (stage-3 rescue only). Without BYTE the

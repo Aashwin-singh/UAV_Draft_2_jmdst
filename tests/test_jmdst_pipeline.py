@@ -131,6 +131,58 @@ class DualBranchOrchestrationTests(unittest.TestCase):
         out7 = jmdst.process_frame(_DummyImage(), (1000, 1000))
         self.assertIn(original_id, [o.track_id for o in out7])
 
+    def test_unavailable_detection_falls_back_to_tracking_branch(self) -> None:
+        # None (no result, e.g. a lost network reply) is not [] (nothing seen):
+        # the frame must run the tracking branch, so a confirmed target is
+        # relocalized and updated *at that frame* and keeps its ID.
+        box = np.array([400.0, 400.0, 30.0, 30.0])
+        center = box[:2] + box[2:] / 2
+        detector = MockDetector([[(box, 0.9)], [(box, 0.9)], None])
+        localizer = _CountingLocalizer([(center, _emb(0, 1))])
+        jmdst = JMDSTTracker(detector, localizer, tau=3)
+        for _ in range(6):
+            jmdst.process_frame(_DummyImage(), (1000, 1000))
+        original_id = jmdst.tracker.confirmed_tracks()[0].track_id
+        calls_before = localizer.calls
+
+        out6 = jmdst.process_frame(_DummyImage(), (1000, 1000))  # detection frame, result unavailable
+
+        self.assertEqual(localizer.calls, calls_before + 1)  # tracking branch ran
+        self.assertEqual([o.track_id for o in out6], [original_id])
+        self.assertEqual(jmdst.tracker.confirmed_tracks()[0].time_since_update, 0)
+        self.assertEqual(jmdst.unavailable_detection_frames, 1)
+        self.assertEqual(jmdst.frame_index, 7)  # schedule unchanged: next detection at 9
+
+    def test_unavailable_detection_before_any_track_is_harmless(self) -> None:
+        box = np.array([100.0, 100.0, 20.0, 20.0])
+        detector = MockDetector([None, [(box, 0.9)]])
+        jmdst = JMDSTTracker(detector, MockLocalizer([(box[:2] + box[2:] / 2, _emb(1, 0))]), tau=3)
+        for _ in range(3):
+            self.assertEqual(jmdst.process_frame(_DummyImage(), (1000, 1000)), [])
+        self.assertEqual(jmdst.tracker.tracks, [])
+        jmdst.process_frame(_DummyImage(), (1000, 1000))  # frame 3: real detections start tracks
+        self.assertEqual(len(jmdst.tracker.tracks), 1)
+
+    def test_skip_frame_coasts_tracks_without_moving_the_schedule(self) -> None:
+        box = np.array([100.0, 100.0, 20.0, 20.0])
+        detector = MockDetector([[(box, 0.9)]])
+        localizer = _CountingLocalizer([(box[:2] + box[2:] / 2, _emb(1, 0))])
+        jmdst = JMDSTTracker(detector, localizer, tau=3)
+        jmdst.process_frame(_DummyImage(), (1000, 1000))  # detection frame 0
+        self.assertEqual(jmdst.last_branch, "detect")
+        track = jmdst.tracker.tracks[0]
+        calls = (detector.calls, localizer.calls)
+
+        jmdst.skip_frame()
+        jmdst.skip_frame()
+
+        self.assertEqual((detector.calls, localizer.calls), calls)  # no model ran
+        self.assertEqual(track.time_since_update, 2)  # coasted two camera frames
+        self.assertEqual((jmdst.frame_index, jmdst.skipped_frames), (1, 2))
+        jmdst.process_frame(_DummyImage(), (1000, 1000))
+        self.assertEqual(jmdst.last_branch, "track")  # processed frame 1 of the tau cycle
+        self.assertEqual(track.time_since_update, 0)
+
     def test_boundary_target_not_in_expansion(self) -> None:
         # A confirmed target that goes undetected AND sits within d of the image
         # border should not be recovered (likely left the frame).

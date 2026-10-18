@@ -5,6 +5,254 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## Edge/ground simulation, Phase 3 — edge hardware limits + real-time camera (2026-10-18)
+
+Machine idle for every measurement here (the busy `cmd.exe` was gone; system
+CPU 8% before starting).
+
+**Edge hardware** (`jmdst/sim/hardware.py`): one Windows Job Object on the
+edge process — hard CPU cap in cores' worth, core affinity, memory limit —
+plus torch/OpenCV thread pools sized to it; `--device cpu` for a CPU-only
+edge. Children break away (`SILENT_BREAKAWAY_OK`). Probed before use: 4 busy
+threads use 3.91 cores free, **1.14 capped at 1.0** (the ~14% overshoot seen
+on 2026-10-12); a child of the capped process used **3.98 cores on all 32
+CPUs** (fully outside the cap); a 1 GB memory cap refused a 2 GB allocation.
+
+**Real-time camera** (`jmdst/sim/camera.py`, `--realtime`): a separate,
+uncapped process decodes frames ahead and publishes frame k at
+`t0 + k/30` into a shared-memory ring (seqlocked slots); the edge always takes
+the newest frame. Frames it was too busy for are skipped:
+`JMDSTTracker.skip_frame()` coasts tracks on the Kalman model, and the tau
+schedule counts *processed* frames (camera-frame scheduling would let an
+overloaded edge alias onto or past the detection frames). Camera decode is
+not charged to the edge. Camera health: worst publish delay 1.1-1.9 ms in
+every run.
+
+**Scoring — streaming perception** (Li, Wang, Ramanan, ECCV 2020): camera
+frame j is scored with the newest result the edge had *finished* by j's
+capture time (`latest_finished`). This is what a ground operator would see;
+skipped frames and slow processing both cost accuracy, where offline scoring
+would only report a lower FPS. 30 fps is UAVDT's published rate; VisDrone
+states none, and 30 is assumed.
+
+**Results, UAVDT val, shipping config, perfect link, JPEG q90:**
+
+| configuration | frames processed | latency p50 | HOTA | MOTA | IDF1 |
+|---|---:|---:|---:|---:|---:|
+| offline, lossless frames (`p0_nocopy`) | 2484/2484 | — | 46.6 | 25.7 | 61.1 |
+| offline, JPEG q90 | 2484/2484 | — | 45.8 | 23.0 | 60.2 |
+| offline JPEG, shown 1 frame late | — | — | 43.8 | 21.6 | 59.6 |
+| **real time, GPU edge** | 2475 | 17 ms | **41.9** | 14.4 | 57.1 |
+| **real time, 4 E-cores, CPU only** | 1803 (27% skipped) | 60 ms | **38.5** | 5.5 | 50.5 |
+| **real time, 1 E-core, CPU only** | 1176 (53% skipped) | 79 ms | **33.2** | -5.0 | 39.5 |
+
+Read as a cost breakdown from 46.6: JPEG -0.8; the irreducible one-frame
+display lag of real time -2.0; detection frames taking ~35 ms (RTT + FELNet,
+just over one 33 ms period) so ~25% of frames are shown two frames late,
+-1.9; then the hardware: 4 E-cores -3.4 more, 1 E-core -5.3 more. Caps held:
+the edges used 3.58 of 4 and 0.79 of 1 cores. The 1-core edge sits below its
+cap because it idles while waiting for detection replies — offloading's own
+cost.
+
+**Verification of the real-time machinery — deterministic replay.** The
+ground's detections are deterministic in the JPEG bytes, so the real-time GPU
+run was replayed offline: process exactly the frames it processed,
+`skip_frame()` for the ones it skipped, local JPEG->YOLO in place of the
+ground, then `latest_finished` on the recorded finish times
+(`scripts/verify_realtime_replay.py`). **All three real-time runs replay
+byte-identically, 3/3 sequences each** (GPU, 4 E-cores, 1 E-core). So the
+real-time numbers above are exactly what the scoring rule says, with no error
+from the camera, skipping, or the clock. The replay must run each model where
+it ran in the deployment — YOLO on the ground's GPU, FELNet on the edge's
+device *with the edge's thread count*: a first attempt that ran YOLO on the
+CPU edge's device differed on every sequence.
+
+8 new tests (camera ordering/pixels/skipping, streaming rule, CPU list
+parsing, a CPU cap held in a child process, skip_frame semantics). 178 tests
+pass.
+
+## Edge/ground simulation, Phase 2 — edge and ground nodes (2026-10-15)
+
+Three processes now make up the deployment, each runnable in its own
+terminal: `scripts/ground_node.py` (YOLO; "loaded / listening / serving"),
+`scripts/link_relay.py` (Phase 1), and `scripts/edge_node.py` (the UAV:
+CMC + Kalman + FELNet + association + the tau schedule). `scripts/run_sim.py`
+starts all three for experiments. The edge's detector is a `RemoteDetector`
+(`jmdst/net/nodes.py`) dropped into JMDSTTracker's existing `detector` seam,
+so **no tracker logic is duplicated**.
+
+**One pipeline change**: a detector may return `None` — "no result for this
+frame", distinct from `[]` "looked, found nothing". On `None` that frame runs
+the tracking branch (Kalman + FELNet carry targets through the gap, the
+paper's missed-detection mechanism); the tau schedule is unchanged. The edge
+waits synchronously up to `--deadline-ms`: Algorithm 1 uses frame t's
+detections at frame t, so applying a late reply to a later frame would change
+the algorithm. Late replies are discarded and recorded as `late`.
+
+**Wire protocol** (`jmdst/net/protocol.py`): messages fragmented to 1400-byte
+datagrams, **no retransmission** (as RTP/UDP video) — one lost packet loses
+the frame. The edge sends its conf/IoU/imgsz in each request, so ground and
+edge cannot disagree on post-processing; replies carry float64 boxes
+(bit-exact) and the ground's timestamps, giving the edge a complete
+one-clock record per detection frame (`exchanges.csv`: send, ground arrival,
+ground compute, reply send/arrival, bytes, packets, ok/lost/late).
+
+**Shared tracker construction**: the tracker options moved from
+`run_jmdst.py` into `jmdst/pipeline/cli.py`, used by both `run_jmdst.py` and
+`edge_node.py`, so the two deployments cannot drift. Refactor verified: first
+60 frames of all 10 VisDrone val sequences identical to `outputs/p0_nocopy`.
+
+**Equivalence check — the split system reproduces the single process
+exactly.** Full val, shipping config, perfect link, lossless raw frames:
+**13 of 13 sequence files byte-identical** to `outputs/p0_nocopy`
+(`outputs/sim/equiv_raw`). 5.35 M datagrams through the relay, 0 host drops;
+2,154 detection requests, 0 incomplete.
+
+**Lossy-link check** (300 frames of M0203, `loss 2%` both ways, JPEG q90):
+**77 of 100 detection frames lost**, and every one fell back to the tracking
+branch without error. That matches theory: a 62-76-packet frame survives 2%
+packet loss with probability 0.98^70 = 24%. The first evaluation result in
+the making — *without retransmission or FEC, a "2% loss" link costs this
+design three quarters of its detections.*
+
+Measured per detection frame on a perfect link: JPEG q90 is 87-101 KB on
+UAVDT and ~250 KB on VisDrone; raw is 1.7-12.3 MB (equivalence only — its
+75-432 ms RTT is Python handling up to 9,000 datagrams, not a network effect).
+
+Three defects found and fixed along the way:
+
+* **Relay burst handling.** Draining a whole burst before releasing held its
+  head back: 9 ms median release lateness on a *perfect* link with raw frames.
+  Now releases between 64-datagram reads: 0.46 ms median, 1.4 ms max.
+* **Socket buffers** raised 8 -> 64 MB: the largest frame (2720x1530) is
+  12.5 MB raw. Windows grants 64 MB (verified by read-back).
+* **Ground cold start.** The first request of each YOLO input shape paid
+  ~150 ms of CUDA kernel selection, which would read as a lost frame under a
+  100 ms deadline. Every val/test size letterboxes to one of two shapes
+  (640x352 UAVDT, 640x384 the rest); warming both up cut the first request to
+  69 ms.
+
+**Machine-state warning for every timing in this entry**: a parentless
+`cmd.exe` using ~7 cores is running again (PID 11140, started 18:22, when no
+simulation work was running). Ground YOLO time measured 15.6 ms/frame
+without it and 24-50 ms with it. Correctness results above are unaffected;
+**all latency/FPS numbers must be re-measured on an idle machine**.
+
+12 new tests (protocol, codecs, node exchanges over real sockets, fallback in
+the pipeline). 170 tests pass.
+
+## Edge/ground simulation, Phase 1 — network link emulator (2026-10-15)
+
+**Context for the whole simulation track.** Evaluation needs the system run as
+a split UAV (edge) / ground-station deployment under network and edge-hardware
+limits (snapshots 4.10/4.11). Chosen design, after evaluating the original
+Docker + `tc netem` plan:
+
+* **Both nodes native on Windows, real UDP between them, through a Python
+  link emulator.** Docker/netem was rejected *for this host*: no WSL2 or
+  Docker installed; netem cannot shape the Windows side of a Docker Desktop
+  link; and the container's VM clock is not the host's, which would make the
+  required send-vs-arrival telemetry measure clock skew. Here every process
+  reads one clock (`perf_counter` = QPC, verified shared across processes).
+* **Split along JMDST's own seam**: the edge (UAV) runs the tracking branch
+  locally and sends only detection frames (1 in tau) to the ground's YOLO; a
+  lost or late reply makes the edge run the tracking branch instead — the
+  paper's missed-detection mechanism. "Send every frame" is the comparison.
+* **Edge hardware** to be limited with a Windows Job Object CPU hard cap
+  (Docker `--cpus` equivalent; measured to hold within ~15%) plus core
+  affinity, CPU-only. A GPU edge cannot be throttled per-process on Windows.
+
+**This phase: `jmdst/net/`.** `link.py` is a pure, seeded link model mirroring
+netem — delay + jitter (uniform/normal), rate (serialisation with IPv4+UDP
+overhead), transmit buffer with tail drop, Bernoulli or Gilbert-Elliott loss —
+configured in **netem's own syntax** so the same strings can drive real netem
+for a cross-check. Two deliberate differences, both toward a radio link: FIFO
+is preserved under jitter (netem reorders), and `limit` counts only packets
+awaiting transmission. Loss and jitter use separate seeded streams with one
+draw per packet regardless of fate, so packet *i* meets the same channel under
+every rate/delay setting — configurations compare packet-for-packet.
+`relay.py` runs it on real UDP sockets, one model per direction, with a
+per-packet CSV (arrival, bytes, queue delay, scheduled/actual release, drop
+reason).
+
+**Calibration** (`scripts/calibrate_link.py`, real traffic, relay in its own
+process): **29/29 checks pass.**
+
+| scenario | configured | measured |
+|---|---:|---:|
+| perfect link, mean one-way delay | 0 ms | 0.31 ms (floor) |
+| `delay 50ms` | 50 ms | 50.65 ms |
+| `delay 50ms 20ms`, std dev | 11.55 ms | 11.25 ms |
+| `loss random 5%` | 5.00% | 5.10% (same packets as the model: 100%) |
+| `loss gemodel 1% 25%` | 3.85%, bursts of 4.0 | 3.84%, bursts of 3.43 |
+| `rate 10mbit`, offered 8 | 8.00 Mbit/s | 8.00 Mbit/s, no drops |
+| `rate 10mbit limit 100`, offered 15 | 10.00 Mbit/s, 30.81% drop, 99.2 ms | 10.00, 30.85%, 99.3 ms |
+
+Emulator timing error (actual minus scheduled release) p95 0.2-1.2 ms, max
+2.1 ms across scenarios. The GE burst length is ~1.1 standard errors low on
+~48 bursts; the model-level test over 200k packets gives 4.0 ± 0.3.
+
+**Found during calibration — Windows 11 timer throttling.** The jitter
+scenario first failed with release errors up to 15.7 ms. Cause, isolated with
+a 12 s probe: a windowless process that is mostly idle has its
+`timeBeginPeriod(1)` request ignored after ~2 s (overshoot median 0.4 ms in
+the first 2 s, then 9.6-12.4 ms). Dense traffic masked it in every other
+scenario. Fix: `high_resolution_timer` also opts the process out via
+`SetProcessInformation(ProcessPowerThrottling, IGNORE_TIMER_RESOLUTION)` —
+0.3-0.7 ms medians held for the full 12 s, and the scenario's p95 fell from
+13.9 to 1.5 ms. Recorded as ARCHITECTURE.md invariant 12: it matters most for
+the edge/ground nodes, whose detection traffic is sparse.
+
+Two calibration *check* bugs were also fixed, not emulator bugs: buffer
+overflow drops depend on sub-ms arrival timing, so the overload scenario is
+judged on drop rate vs queueing theory, not packet-level agreement; and the
+jitter scenario's mean-delay check now allows for the sampling error of the
+mean (±0.8 ms SE on 200 packets).
+
+21 new tests (model semantics exactly, netem parser, real-socket relay). 158
+tests pass.
+
+## Edge/ground simulation, Phase 0 — remove per-target frame copy (2026-10-15)
+
+Groundwork for the edge/ground network + hardware simulation. That work will
+measure how a CPU-constrained edge copes with the tracking branch, so any
+avoidable per-target cost would be measured as an architectural limit when it
+is really an implementation one. Profiling found one.
+
+**The defect**: `crop_ssi` began with `image = image.convert("RGB")`. PIL's
+`convert()` returns a **copy** even when the mode already matches, and every
+caller already passes RGB. `FELNetLocalizer` calls `crop_ssi` once per
+target, so each tracking frame copied the whole frame N times — 0.54 ms per
+copy on a 1024x540 UAVDT frame, roughly a third of FELNet's GPU time at 20
+targets (~11 of 33 ms). Fix: convert only when `image.mode != "RGB"`. The
+source is only read afterwards (crop/paste), so no pixel can change.
+
+**Correctness**: re-ran the full shipping config on val
+(`outputs/p0_nocopy`) and diffed against `outputs/p2_byte40` — **13 of 13
+sequence files byte-identical**. Every metric is unchanged by construction.
+New test pins the non-RGB path (RGBA/P/L inputs give the same SSI as
+pre-converting, source image untouched). 137 tests pass.
+
+**Speed**, measured as an interleaved A/B (old path re-introduced by a
+wrapper, same machine state for both arms):
+
+| | old | new | change |
+|---|---:|---:|---:|
+| UAVDT val FPS (run 1 / run 2) | 23.8 / 24.0 | 30.9 / 30.9 | **+29%** |
+| VisDrone val FPS (single pair) | 11.4 | 19.4 | **~+70%** |
+
+VisDrone gains more because it has both more targets per frame and larger
+frames, and the copy cost is targets × frame area. The VisDrone figure is a
+single pair and so less certain than UAVDT's repeated one.
+
+**Absolute FPS here is not comparable to earlier entries.** These runs shared
+the machine with an unrelated background process using ~8 cores; the same
+pre-fix code ran UAVDT val at 46.9 FPS on 2026-08-11 and 24 FPS here. Only
+the old/new ratio is valid. The held-out test FPS in `RESULTS_SUMMARY.md`
+(26.9 / 15.6) predates this fix and now understates the system; tracking
+output is provably identical, so only the timing is stale. Re-measure on an
+idle machine before quoting new FPS.
+
 ## IN PROGRESS — detector capacity upgrade: yolo11n → yolo11m (2026-08-06)
 
 Post-test improvement work. Rationale is the project's own repeated finding:
