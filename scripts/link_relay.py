@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--telemetry", default=None, help="Per-packet CSV log path.")
     parser.add_argument("--duration", type=float, default=None, help="Stop after this many seconds.")
     parser.add_argument("--stats-every", type=float, default=5.0, help="Seconds between status lines.")
+    parser.add_argument("--cpus", default=None, help="Pin to these logical CPUs, e.g. 0-15, away from the edge's.")
     return parser
 
 
@@ -58,12 +59,21 @@ def _status(relay: LinkRelay) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     interrupt_on_ctrl_break()
+    if args.cpus:
+        import psutil
+
+        from jmdst.sim import parse_cpu_list
+
+        psutil.Process().cpu_affinity(list(parse_cpu_list(args.cpus)))
     e2g, g2e = parse_netem(args.e2g), parse_netem(args.g2e)
 
     log_file = None
     if args.telemetry:
         Path(args.telemetry).parent.mkdir(parents=True, exist_ok=True)
         log_file = open(args.telemetry, "w", newline="", encoding="utf-8")
+        # The link's settings travel with its log, so a report can state them.
+        Path(args.telemetry).with_suffix(".json").write_text(
+            json.dumps({"e2g": e2g.to_netem(), "g2e": g2e.to_netem()}, indent=2), encoding="utf-8")
 
     relay = LinkRelay(_addr(args.edge_listen), _addr(args.ground), e2g, g2e, telemetry=log_file)
     print(f"[link] edge->ground: {e2g.to_netem()}")

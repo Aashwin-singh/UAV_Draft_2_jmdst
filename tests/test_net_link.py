@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import math
 import socket
@@ -200,9 +201,11 @@ class RelaySocketTests(unittest.TestCase):
         stop.set()
         thread.join(2)
         self.assertEqual(relay.stats()["e2g"]["dropped_channel"], 5)
-        rows = log.getvalue().strip().splitlines()
-        self.assertEqual(len(rows), 1 + 5)  # header + one row per packet
-        self.assertTrue(all(r.endswith(",1,channel") for r in rows[1:]))
+        rows = list(csv.DictReader(io.StringIO(log.getvalue())))
+        self.assertEqual(len(rows), 5)  # one row per packet
+        for row in rows:
+            self.assertEqual((row["dropped"], row["drop_reason"]), ("1", "channel"))
+            self.assertEqual(row["head"], "00" * 12)  # first 12 payload bytes, as a capture would show
 
 
 if __name__ == "__main__":

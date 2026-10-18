@@ -4,37 +4,89 @@ For teammates presenting without the original author or their laptop.
 
 ---
 
-## ⚠️ Read this first: two required snapshots cannot be produced
+## 4.10 and 4.11: the edge/ground simulation
 
-**Snapshots 4.10 and 4.11 describe a system this project does not contain.**
+Snapshots 4.10 and 4.11 ask for a **Ground Node** and an **Edge Node** with
+network telemetry. That system now exists (`project_log.md`, "Edge/ground
+simulation" Phases 0-4). Ready-made evidence is in `snapshots/4.10_*` and
+`snapshots/4.11_telemetry.txt`, and both can be re-run live.
 
-* **4.10** — "Two terminal windows side-by-side: **Ground Node** and **Edge
-  Node**, showing loaded/listening/serving and sent-vs-local frames"
-* **4.11** — "Telemetry output/table showing **send time, arrival time, queue
-  delay, bytes, loss flag** + run summary"
+**What it is, in one sentence for the evaluator:** the UAV (edge) and the
+ground station run as separate processes that talk over real UDP sockets
+through a network emulator, and the edge's processor is deliberately limited
+to a small onboard computer.
 
-That is a **distributed edge↔ground streaming system with network telemetry**.
-This repository is a single-process tracker. Verified by search: there is no
-socket, no client/server, no node split, no message queue, and no telemetry
-anywhere in `jmdst/` or `scripts/`. The only match for "telemetry" is a comment
-in `cmc.py` stating that camera-motion compensation needs *no* telemetry.
+* **Edge node** = the UAV. It runs the tracker: Kalman, FELNet, camera-motion
+  compensation. Only 1 frame in 3 (the detection frames, tau = 3) is **sent**
+  to the ground for YOLO; the other 2 are **local**. If a reply is lost or
+  late, that frame is tracked locally instead (the paper's missed-detection
+  mechanism).
+* **Ground node** = the ground station's GPU running YOLO: loaded -> listening
+  -> serving.
+* **Link** = delay, jitter, bandwidth, buffer and packet loss, configured in
+  the same syntax as Linux `tc netem`.
 
-**Nothing in the 10 other snapshots is affected — those are all real and
-included here.** But 4.10 and 4.11 cannot be generated from this codebase, and
-no amount of running existing scripts will produce them.
+**Say this plainly if asked:** all three run **on one machine**. The link is
+emulated, not a real radio. The edge is a CPU-capped process, not a real
+onboard board. Report its limits as *compute budgets*, not as a named device.
 
-**Someone must resolve this before evaluation.** Three possibilities:
+### Running it live: three terminals, in this order
 
-1. The snapshot list belongs to a **different module or a different team's
-   project**, and was sent by mistake.
-2. The capstone brief includes an **edge/ground deployment component** that was
-   never in this repository's scope (the roadmap here is 11 phases of detection
-   + tracking, none of which mention networking).
-3. It is **planned work that was never started**.
+The commands below use the demo clip, so **no datasets are needed**. Start each
+in its own terminal (cmd.exe is fine) and wait for the line shown before
+starting the next.
 
-Ask whoever issued the snapshot list which it is. If a distributed component is
-genuinely required, that is new development — not a screenshot — and the
-evaluator needs to know it does not exist rather than discovering it live.
+```bash
+python scripts/ground_node.py --yolo outputs/yolo_runs/retrain_aug_m_lowlr/weights/best.pt --print-every 10
+```
+Wait for `[ground] listening on 127.0.0.1:47001`.
+
+```bash
+python scripts/link_relay.py --e2g "delay 15ms 5ms rate 50mbit loss 0.1% seed 1" --g2e "delay 15ms seed 2" --telemetry outputs/sim/live/link.csv
+```
+Wait for `[link] listening for edge`.
+
+```bash
+python scripts/edge_node.py --felnet outputs/felnet_runs/full_run/best.pt --source demo_package/clips/uavdt_M0101.mp4 --conf 0.55 --no-appearance --nsa --cmc --byte --byte-low-conf 0.4 --realtime --device cpu --deadline-ms 150 --output-root outputs/sim/live
+```
+
+The edge prints a status line every 2 s and finishes in about 15 s. Then stop
+the ground and link with **Ctrl+C**; each prints a summary. (Closing the window
+instead loses the end of the link's log, so the last frames' queue delay is
+missing from the 4.11 table.) **For 4.10, screenshot
+the ground and edge terminals side by side.** Point at:
+* ground: `loaded`, `listening`, `serving frame ...`, and `never completed`
+  lines (frames that lost a packet on the link);
+* edge: `sent N (ok, lost)` vs `local M`, and `skipped` (camera frames the
+  CPU-limited edge was too busy for).
+
+**For 4.11**, run the report and screenshot it:
+
+```bash
+python scripts/sim_telemetry.py --run outputs/sim/live --rows 20
+```
+
+It prints one row per detection frame (send time, arrival time, queue delay,
+bytes, packets, loss flag and why) and then a run summary.
+
+`--edge-cpus 16-19` (as in the snapshot files) pins the edge to the author's
+i9-14900HX efficiency cores. On another machine, leave it out or pick that
+machine's own core numbers.
+
+### Numbers will differ on another machine, and here is why
+
+* The edge's speed depends on the teammate's CPU, so "skipped" and the RTT
+  will differ. That is expected, not a fault.
+* **On a laptop, CPU and GPU share one power budget.** When the CPU-only edge
+  is busy, the ground's GPU is down-clocked: 1980 -> 465 MHz measured, YOLO
+  15 -> 42 ms. That is why the ground's YOLO shows ~40 ms in the snapshot
+  files. A real ground station is a separate machine, so this is an artifact
+  of simulating both on one laptop. Mention it if the ground compute time is
+  questioned.
+* The headline finding to quote: **with no retransmission, one lost packet
+  loses the whole frame.** A ~160-packet frame survives 0.1% packet loss only
+  85% of the time; at 2% loss, 77% of detection frames were lost
+  (`project_log.md`).
 
 ---
 
@@ -43,7 +95,7 @@ evaluator needs to know it does not exist rather than discovering it live.
 ```
 handover/
   HANDOVER.md              <- this file
-  snapshots/               <- pre-generated evidence for 4.1-4.9 and 4.12
+  snapshots/               <- pre-generated evidence for 4.1-4.12
 demo_package/              <- the live demo (clips, fallbacks, launcher, README)
 RESULTS_SUMMARY.md         <- every results table, for the presentation
 ```
@@ -68,8 +120,8 @@ if their machine is set up (see "What teammates need").
 | 4.7 | Eval table, per-sequence + overall | **Ready** | `snapshots/4.7_evaluation/{uavdt,visdrone}_test.md` |
 | 4.8 | Consecutive DETECTION / TRACKING frames | **Ready** | `snapshots/4.8_branch_frames/` (two PNGs) |
 | 4.9 | τ sweep table | **Ready** | `snapshots/4.9_tau_sweep.txt` |
-| 4.10 | Ground Node / Edge Node terminals | **NOT POSSIBLE** | does not exist — see above |
-| 4.11 | Network telemetry table | **NOT POSSIBLE** | does not exist — see above |
+| 4.10 | Ground Node / Edge Node terminals | **Ready** | `snapshots/4.10_{ground_node,link,edge_node}.txt` — better run live, see above |
+| 4.11 | Network telemetry table | **Ready** | `snapshots/4.11_telemetry.txt` — `sim_telemetry.py`, see above |
 | 4.12 | Test run showing count + OK | **Ready** | `snapshots/4.12_tests.txt` |
 
 ### Notes on specific snapshots

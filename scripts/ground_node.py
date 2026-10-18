@@ -43,12 +43,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=None)
     parser.add_argument("--telemetry", default=None, help="Per-request CSV log path.")
     parser.add_argument("--print-every", type=int, default=30, help="Print one 'serving' line per N requests (0 = none).")
+    parser.add_argument("--cpus", default=None, help="Pin to these logical CPUs, e.g. 0-15, away from the edge's.")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     interrupt_on_ctrl_break()
+    if args.cpus:
+        import psutil
+
+        from jmdst.sim import parse_cpu_list
+
+        psutil.Process().cpu_affinity(list(parse_cpu_list(args.cpus)))
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     from ultralytics import YOLO

@@ -5,6 +5,63 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## Edge/ground simulation, Phase 4 — snapshot telemetry (4.10 / 4.11) (2026-10-18)
+
+**Snapshots 4.10 and 4.11 are now produced from the real system**
+(`handover/snapshots/4.10_{ground_node,link,edge_node}.txt`,
+`4.11_telemetry.txt`; `handover/HANDOVER.md` rewritten with the live
+three-terminal procedure, run verbatim to confirm it works).
+
+* **Clips as a source** (`edge_node.py --source clip.mp4`; the camera process
+  decodes video too), because teammates present from `demo_package/` without
+  the datasets.
+* **Live progress** on the edge every 2 s: `sent N (ok, lost) | local M |
+  skipped K | RTT`, so a mid-run screenshot shows sent-vs-local.
+* **Queue delay per detection frame.** Only the link knows it, per packet. The
+  link log now records each packet's first 12 bytes (the protocol header), as
+  a packet capture's snap length would; the relay still never interprets
+  payloads. `scripts/sim_telemetry.py` joins edge exchanges + link packets +
+  timing into one row per detection frame — send time, arrival time, uplink,
+  queue delay, bytes, packets, loss flag and **why** (request packet lost /
+  reply lost / late), RTT — plus a run summary; writes `telemetry.csv`.
+  The link also saves its settings beside its log (`link.json`).
+
+Snapshot run (UAVDT M0101 clip, real time, CPU-only edge on 4 E-cores, link
+`delay 15ms 5ms rate 50mbit loss 0.1%`, deadline 150 ms): 400 camera frames,
+164 processed (59% skipped); 55 sent, 47 ok (85.5%), 8 lost, **each to exactly
+one dropped packet of ~157**; uplink 55 ms of which 34 ms is queueing
+(219 KB at 50 Mbit/s); RTT 112 ms.
+
+**Bandwidth must fit the deadline.** A first demo at `rate 20mbit` and a
+100 ms deadline got **0 of 80 replies in time**: decoded-video frames are
+219 KB as JPEG q90 (dataset images: ~90 KB), which take 88 ms just to
+serialise at 20 Mbit/s, so the uplink alone (113 ms) exceeded the deadline
+before the ground started. A rule for the sweeps: frame size / bandwidth +
+delay + ground compute + downlink must fit inside the deadline, or offloading
+fails completely rather than gradually.
+
+**Found: on one laptop, a busy CPU edge throttles the ground's GPU.** Ground
+YOLO took 27-40 ms in every CPU-edge run but 13-22 ms with a GPU edge. Ruled
+out, each by measurement: GPU idling between sparse requests (160 ms gaps,
+CPU idle: 13.8 ms); thread contention (14.9 -> 16.0 ms under a 4-core hashing
+load; fewer torch threads made it worse, 21.7); EcoQoS throttling (opted out:
+38.6 -> 37.4); core pinning of ground + link away from the edge (39.5 ->
+38.0). Confirmed: identical sparse requests with **FELNet running on CPUs
+16-19** -> **GPU clock 1980 -> 465 MHz, YOLO 14.9 -> 42.2 ms**. The laptop
+shares its power budget between CPU and GPU. So **the Phase 3 CPU-edge
+results (4 E-cores 38.5, 1 E-core 33.2 HOTA) are pessimistic**: their
+detection RTT carried ~20-27 ms of ground slowdown a real, separate ground
+station would not have. GPU-edge results are unaffected. ARCHITECTURE.md
+invariant 15. Kept anyway, as harmless: the EcoQoS opt-out
+(`high_resolution_timer` now also opts out of execution-speed throttling) and
+`--host-cpus` / `--cpus` pinning.
+
+Re-verified after restructuring the edge loop: offline lossless output still
+identical to `p0_nocopy` (first 60 frames, UAVDT + VisDrone), and a fresh
+real-time CPU-edge run replays byte-identically (3/3). 3 new tests
+(telemetry join: each loss attributed to its cause; video camera source).
+181 tests pass; snapshot 4.12 regenerated.
+
 ## Edge/ground simulation, Phase 3 — edge hardware limits + real-time camera (2026-10-18)
 
 Machine idle for every measurement here (the busy `cmd.exe` was gone; system

@@ -91,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--port-base", type=int, default=47000, help="Link listens on base, ground on base+1.")
     parser.add_argument("--ground-device", default=None)
+    parser.add_argument("--host-cpus", default=None,
+                        help="Pin ground + link to these CPUs (e.g. 0-15), apart from the edge's --edge-cpus.")
+    parser.add_argument("--ground-print-every", type=int, default=0,
+                        help="Ground prints a 'serving' line every N requests (0 = quiet).")
     args, edge_args = parser.parse_known_args(argv)
 
     out = PROJECT_ROOT / args.output_root
@@ -98,14 +102,16 @@ def main(argv: list[str] | None = None) -> int:
     link_addr, ground_addr = f"127.0.0.1:{args.port_base}", f"127.0.0.1:{args.port_base + 1}"
     (out / "run.json").write_text(json.dumps({
         "e2g": args.e2g, "g2e": args.g2e, "no_link": args.no_link, "edge_args": edge_args,
-        "yolo": args.yolo, "felnet": args.felnet, "ground_device": args.ground_device,
+        "yolo": args.yolo, "felnet": args.felnet, "ground_device": args.ground_device, "host_cpus": args.host_cpus,
     }, indent=2), encoding="utf-8")
 
     py = [sys.executable, "-u"]
     ground_cmd = py + [str(SCRIPTS / "ground_node.py"), "--yolo", args.yolo, "--listen", ground_addr,
-                       "--telemetry", str(out / "ground.csv"), "--print-every", "0"]
+                       "--telemetry", str(out / "ground.csv"), "--print-every", str(args.ground_print_every)]
     if args.ground_device:
         ground_cmd += ["--device", args.ground_device]
+    if args.host_cpus:
+        ground_cmd += ["--cpus", args.host_cpus]
     children: list[Child] = []
     try:
         ground = Child("ground", ground_cmd, out / "logs" / "ground.log").start("[ground] listening")
@@ -115,7 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_link:
             link = Child("link", py + [
                 str(SCRIPTS / "link_relay.py"), "--edge-listen", link_addr, "--ground", ground_addr,
-                "--e2g", args.e2g, "--g2e", args.g2e, "--telemetry", str(out / "link.csv"), "--stats-every", "60",
+                "--e2g", args.e2g, "--g2e", args.g2e, "--telemetry", str(out / "link.csv"), "--stats-every", "5",
+                *(["--cpus", args.host_cpus] if args.host_cpus else []),
             ], out / "logs" / "link.log").start("[link] listening")
             children.append(link)
             link.wait_ready(60)

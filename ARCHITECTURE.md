@@ -10,7 +10,7 @@ this JMDST reproduction. Read alongside:
 
 **Status**: 10 of 11 phases implemented. Only Phase 6 (MSFP) is missing —
 blocked because the PyPI `mamba-ssm` sdist ships without its CUDA sources.
-178 tests pass. Final held-out test results are in `project_log.md`.
+181 tests pass. Final held-out test results are in `project_log.md`.
 
 ---
 
@@ -157,13 +157,20 @@ plausible-looking but wrong numbers rather than a crash.
     *finished* by its capture time, so even a fast edge shows the previous
     frame. Compare real-time numbers with real-time numbers. Compare a codec
     with the same codec too: JPEG q90 alone costs 0.8 HOTA on UAVDT val.
+15. **On one laptop the nodes are coupled through the power budget.** A busy
+    CPU-only edge makes the laptop down-clock the GPU the ground's YOLO runs
+    on: 1980 -> 465 MHz measured, YOLO 15 -> 42 ms per frame, with identical
+    requests. A real ground station is a separate machine, so CPU-edge runs
+    carry a ground-compute penalty that GPU-edge runs do not. Core pinning
+    (`--host-cpus`) and EcoQoS opt-out do not remove it. Read
+    `ground_compute_ms` in the telemetry before comparing edge configurations.
 
 ---
 
 ## Running things
 
 ```bash
-python -m unittest discover -s tests          # 178 tests; use discover, not -m unittest tests.x
+python -m unittest discover -s tests          # 181 tests; use discover, not -m unittest tests.x
 python scripts/run_jmdst.py --yolo <w> --felnet <c> --datasets uavdt --split val --tau 3
 python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val
 python scripts/run_ablations.py --datasets uavdt --split val
@@ -175,6 +182,7 @@ python scripts/ground_node.py --yolo <w>        # or run the three nodes in thre
 python scripts/link_relay.py --e2g "<netem>" --g2e "<netem>"
 python scripts/edge_node.py --felnet <c> <same tracker args as run_jmdst.py>
 python scripts/verify_realtime_replay.py --run <run_sim output> --dataset uavdt   # real-time run must replay byte-identically
+python scripts/sim_telemetry.py --run <edge output-root>   # per-detection-frame telemetry + run summary (snapshot 4.11)
 python scripts/link_relay.py --e2g "delay 40ms rate 8mbit loss 1%" --g2e "delay 40ms"   # run the emulator
 ```
 

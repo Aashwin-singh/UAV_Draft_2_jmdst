@@ -34,6 +34,9 @@ compute vs network-wait time).
 Usage (one line in cmd.exe; start the ground node and link first):
     python scripts/edge_node.py --felnet outputs/felnet_runs/full_run/best.pt --datasets uavdt --split val --conf 0.55 --no-appearance --nsa --cmc --byte --byte-low-conf 0.4 --realtime --device cpu --edge-cpus 16-19
 
+Without the datasets (e.g. presenting from the demo package), run a clip:
+    python scripts/edge_node.py --felnet outputs/felnet_runs/full_run/best.pt --source demo_package/clips/uavdt_M0101.mp4 --conf 0.55 --no-appearance --nsa --cmc --byte --byte-low-conf 0.4 --realtime
+
 ``--ground`` defaults to the link emulator's edge port (127.0.0.1:47000);
 point it at the ground node itself (127.0.0.1:47001) to bypass the link.
 """
@@ -43,6 +46,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from dataclasses import dataclass
+from typing import Callable, Iterator
 import sys
 import time
 from pathlib import Path
@@ -81,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--datasets", nargs="+", default=["visdrone", "uavdt"])
     parser.add_argument("--split", default="val")
     parser.add_argument("--sequences", nargs="+", default=None, help="Only these sequence names.")
+    parser.add_argument("--source", default=None,
+                        help="A video clip instead of dataset sequences (no ground truth), "
+                             "e.g. demo_package/clips/uavdt_M0101.mp4.")
     add_tracker_arguments(parser)
     parser.add_argument("--device", default=None, help="cuda | cpu (a CPU-only edge).")
     parser.add_argument("--max-frames", type=int, default=None, help="Cap frames per sequence (debugging).")
@@ -98,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     hw.add_argument("--edge-threads", type=int, default=None, help="torch/OpenCV threads (default: fits the limits).")
     rt = parser.add_argument_group("real time")
     rt.add_argument("--realtime", action="store_true", help="Camera on a fixed clock; skip frames the edge cannot keep up with.")
+    rt.add_argument("--progress-every", type=float, default=2.0, help="Seconds between live status lines (0 = off).")
     rt.add_argument("--camera-fps", type=float, default=30.0,
                     help="UAVDT is published as 30 fps; VisDrone states no rate, 30 is assumed.")
     return parser
@@ -115,25 +124,100 @@ def _frame_row(seq: str, k: int, frame_id: int, capture, start, finish, skipped,
     ]
 
 
-def run_offline(jmdst, remote, sequence_dir, records, image_size) -> tuple[list[str], list[list], dict]:
+@dataclass
+class Job:
+    """One sequence to run: a dataset sequence, or a video clip (no ground truth)."""
+
+    group: tuple[str, str]  # (dataset, split) -> output directory
+    name: str
+    frame_ids: list[int]
+    size: tuple[int, int]
+    images: Callable[[], Iterator[Image.Image]]  # offline: every frame, in order
+    camera_source: list[Path] | Path  # real time: image paths, or the video file
+
+
+def dataset_jobs(args) -> list[Job]:
+    jobs = []
+    for dataset in args.datasets:
+        for sequence_dir in iter_sequence_dirs(args.unified_root, dataset=dataset, split=args.split):
+            if args.sequences is not None and sequence_dir.name not in args.sequences:
+                continue
+            info, records = read_sequence(sequence_dir)
+            records = records if args.max_frames is None else records[: args.max_frames]
+            paths = [resolve_image_path(sequence_dir, r.image_path) for r in records]
+            jobs.append(Job(
+                (dataset, args.split), sequence_dir.name, [r.frame_id for r in records],
+                (info.image_width, info.image_height),
+                lambda paths=paths: (Image.open(p).convert("RGB") for p in paths), paths,
+            ))
+    return jobs
+
+
+def clip_job(args) -> Job:
+    import cv2
+
+    path = Path(args.source)
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise SystemExit(f"cannot open video {path}")
+    n = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    capture.release()
+    n = n if args.max_frames is None else min(n, args.max_frames)
+
+    def images() -> Iterator[Image.Image]:
+        cap = cv2.VideoCapture(str(path))
+        for _ in range(n):
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            yield Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+        cap.release()
+
+    return Job(("clip", path.stem), path.stem, list(range(1, n + 1)), size, images, path)
+
+
+class Progress:
+    """A status line every few seconds while a sequence runs (for live screenshots)."""
+
+    def __init__(self, label: str, total: int, remote: RemoteDetector, every_s: float) -> None:
+        self.label, self.total, self.remote, self.every_s = label, total, remote, every_s
+        self.first = len(remote.exchanges)
+        self.next_at = time.perf_counter() + every_s
+
+    def tick(self, k: int, processed: int, skipped: int) -> None:
+        if not self.every_s or time.perf_counter() < self.next_at:
+            return
+        self.next_at = time.perf_counter() + self.every_s
+        ex = self.remote.exchanges[self.first:]
+        ok = sum(e.outcome == "ok" for e in ex)
+        recent = [e.rtt_ms for e in ex[-30:] if e.outcome == "ok"]
+        print(
+            f"[edge] {self.label} frame {k + 1}/{self.total} | sent {len(ex)} (ok {ok}, lost {len(ex) - ok}) | "
+            f"local {processed - len(ex)}" + (f" | skipped {skipped}" if skipped else "")
+            + (f" | RTT {np.median(recent):.0f} ms" if recent else ""),
+            flush=True,
+        )
+
+
+def run_offline(jmdst, remote, job: Job, progress: Progress) -> tuple[list[str], list[list], dict]:
     lines, rows, busy = [], [], 0.0
-    for k, record in enumerate(records):
-        image = Image.open(resolve_image_path(sequence_dir, record.image_path)).convert("RGB")
-        remote.context = {"sequence": sequence_dir.name, "frame_id": record.frame_id}
+    for k, (frame_id, image) in enumerate(zip(job.frame_ids, job.images())):
+        remote.context = {"sequence": job.name, "frame_id": frame_id}
         remote.last_wait_ms = 0.0
         start = time.perf_counter()
-        outputs = jmdst.process_frame(image, image_size)
+        outputs = jmdst.process_frame(image, job.size)
         finish = time.perf_counter()
         busy += finish - start
-        lines.extend(mot_lines(record.frame_id, outputs))
-        rows.append(_frame_row(sequence_dir.name, k, record.frame_id, None, start, finish, 0,
+        lines.extend(mot_lines(frame_id, outputs))
+        rows.append(_frame_row(job.name, k, frame_id, None, start, finish, 0,
                                jmdst.last_branch, remote.last_wait_ms if jmdst.last_branch != "track" else 0.0))
-    return lines, rows, {"processed": len(records), "busy_s": busy, "fps": len(records) / busy if busy else 0.0}
+        progress.tick(k, k + 1, 0)
+    return lines, rows, {"processed": len(rows), "busy_s": busy, "fps": len(rows) / busy if busy else 0.0}
 
 
-def run_realtime(jmdst, remote, sequence_dir, records, image_size, fps) -> tuple[list[str], list[list], dict]:
-    paths = [resolve_image_path(sequence_dir, r.image_path) for r in records]
-    feed = CameraFeed(paths, image_size, fps)
+def run_realtime(jmdst, remote, job: Job, fps: float, progress: Progress) -> tuple[list[str], list[list], dict]:
+    feed = CameraFeed(job.camera_source, job.size, fps, n=len(job.frame_ids))
     results: list[tuple[float, list]] = []  # (finish time, outputs), in finish order
     rows: list[list] = []
     try:
@@ -144,29 +228,30 @@ def run_realtime(jmdst, remote, sequence_dir, records, image_size, fps) -> tuple
             start = time.perf_counter()
             for _ in range(k - last - 1):
                 jmdst.skip_frame()
-            remote.context = {"sequence": sequence_dir.name, "frame_id": records[k].frame_id}
+            remote.context = {"sequence": job.name, "frame_id": job.frame_ids[k]}
             remote.last_wait_ms = 0.0
-            outputs = jmdst.process_frame(image, image_size)
+            outputs = jmdst.process_frame(image, job.size)
             finish = time.perf_counter()
             results.append((finish, outputs))
-            rows.append(_frame_row(sequence_dir.name, k, records[k].frame_id, feed.capture_time(k), start, finish,
+            rows.append(_frame_row(job.name, k, job.frame_ids[k], feed.capture_time(k), start, finish,
                                    k - last - 1, jmdst.last_branch,
                                    remote.last_wait_ms if jmdst.last_branch != "track" else 0.0))
             last = k
+            progress.tick(k, len(results), k + 1 - len(results))
         camera_late = feed.max_lateness_ms
     finally:
         feed.close()
 
     # Streaming scoring: camera frame j shows the newest result finished by its
     # capture time. Before the first result exists, nothing is shown.
-    shown = latest_finished([f for f, _ in results], [t0 + j / fps for j in range(len(records))])
+    shown = latest_finished([f for f, _ in results], [t0 + j / fps for j in range(len(job.frame_ids))])
     lines = []
-    for record, i in zip(records, shown):
+    for frame_id, i in zip(job.frame_ids, shown):
         if i >= 0:
-            lines.extend(mot_lines(record.frame_id, results[i][1]))
-    duration = len(records) / fps
+            lines.extend(mot_lines(frame_id, results[i][1]))
+    duration = len(job.frame_ids) / fps
     return lines, rows, {
-        "processed": len(results), "skipped": len(records) - len(results),
+        "processed": len(results), "skipped": len(job.frame_ids) - len(results),
         "fps": len(results) / duration, "camera_max_lateness_ms": camera_late,
         "latency_ms": [float(r[6]) for r in rows],
     }
@@ -200,51 +285,50 @@ def main(argv: list[str] | None = None) -> int:
     start = time.perf_counter()
     total_frames = 0
     meter = CpuMeter()
+    jobs = [clip_job(args)] if args.source else dataset_jobs(args)
+    groups: dict[tuple[str, str], list[Job]] = {}
+    for job in jobs:
+        groups.setdefault(job.group, []).append(job)
     with high_resolution_timer():
-        for dataset in args.datasets:
-            sequence_dirs = [
-                d for d in iter_sequence_dirs(args.unified_root, dataset=dataset, split=args.split)
-                if args.sequences is None or d.name in args.sequences
-            ]
-            split_dir = output_root / dataset / args.split
+        for (dataset, split), group_jobs in groups.items():
+            split_dir = output_root / dataset / split
             split_dir.mkdir(parents=True, exist_ok=True)
             first_exchange = len(remote.exchanges)
             frame_rows: list[list] = []
             per_seq: dict[str, dict] = {}
             meter.reset()
-            for sequence_dir in sequence_dirs:
-                info_seq, records = read_sequence(sequence_dir)
-                records = records if args.max_frames is None else records[: args.max_frames]
-                image_size = (info_seq.image_width, info_seq.image_height)
+            for job in group_jobs:
+                n_frames = len(job.frame_ids)
                 jmdst = tracker_from_args(args, remote, localizer)
                 seq_first = len(remote.exchanges)
+                progress = Progress(job.name, n_frames, remote, args.progress_every)
 
                 if args.realtime:
-                    lines, rows, stats = run_realtime(jmdst, remote, sequence_dir, records, image_size, args.camera_fps)
+                    lines, rows, stats = run_realtime(jmdst, remote, job, args.camera_fps, progress)
                 else:
-                    lines, rows, stats = run_offline(jmdst, remote, sequence_dir, records, image_size)
+                    lines, rows, stats = run_offline(jmdst, remote, job, progress)
                 remote.drain(wait_s=0.2)  # classify any last reply that arrived after its deadline
                 frame_rows.extend(rows)
 
-                (split_dir / f"{sequence_dir.name}.txt").write_text(
+                (split_dir / f"{job.name}.txt").write_text(
                     "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
                 exchanges = remote.exchanges[seq_first:]
                 outcomes = {k: sum(e.outcome == k for e in exchanges) for k in ("ok", "lost", "late")}
                 rtts = [e.rtt_ms for e in exchanges if e.outcome == "ok"]
-                stats.update({"frames": len(records), "outcomes": outcomes, "detection_frames": len(exchanges)})
-                per_seq[sequence_dir.name] = {k: v for k, v in stats.items() if k != "latency_ms"}
-                pace = (f"processed {stats['processed']}/{len(records)} ({stats['skipped']} skipped), "
+                stats.update({"frames": n_frames, "outcomes": outcomes, "detection_frames": len(exchanges)})
+                per_seq[job.name] = {k: v for k, v in stats.items() if k != "latency_ms"}
+                pace = (f"processed {stats['processed']}/{n_frames} ({stats['skipped']} skipped), "
                         f"latency p50 {_pct(stats['latency_ms'], 50)} p95 {_pct(stats['latency_ms'], 95)} ms"
                         if args.realtime else f"{stats['fps']:.1f} FPS")
                 print(
-                    f"[edge] {dataset}/{args.split}/{sequence_dir.name}: {len(records)} frames | "
+                    f"[edge] {dataset}/{split}/{job.name}: {n_frames} frames | "
                     f"sent {len(exchanges)} to ground (ok {outcomes['ok']}, lost {outcomes['lost']}, "
                     f"late {outcomes['late']}) | local {stats['processed'] - len(exchanges)} "
                     f"+ {jmdst.unavailable_detection_frames} fallback | RTT p50 {_pct(rtts, 50)} ms | {pace}",
                     flush=True,
                 )
-                total_frames += len(records)
+                total_frames += n_frames
 
             cores_used = meter.cores_used()
             exchanges = remote.exchanges[first_exchange:]

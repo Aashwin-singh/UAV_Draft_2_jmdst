@@ -89,6 +89,30 @@ class CameraFeedTests(unittest.TestCase):
             finally:
                 feed.close()
 
+    def test_video_source(self) -> None:
+        import cv2
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "clip.mp4"
+            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30, (64, 48))
+            for k in range(12):
+                writer.write(np.full((48, 64, 3), (40, 120, k * 20), dtype=np.uint8))  # BGR
+            writer.release()
+            feed = CameraFeed(path, (64, 48), fps=60, n=12)
+            try:
+                feed.start()
+                last, taken = -1, []
+                while (got := feed.take_newest(last)) is not None:
+                    k, image = got
+                    r, g, b = image.getpixel((32, 24))
+                    self.assertLess(abs(r - k * 20) + abs(g - 120) + abs(b - 40), 30)  # BGR -> RGB, lossy codec
+                    taken.append(k)
+                    last = k
+                self.assertEqual(taken[-1], 11)
+            finally:
+                feed.close()
+
     def test_slow_consumer_skips_to_the_newest_frame(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = self._frames(Path(tmp), 20)

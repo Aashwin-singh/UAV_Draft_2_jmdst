@@ -65,11 +65,17 @@ def latest_finished(finish_times: list[float], capture_times: list[float]) -> li
 class CameraFeed:
     """Edge-side handle on a camera process replaying one sequence."""
 
-    def __init__(self, image_paths: list[Path], size: tuple[int, int], fps: float, slots: int = 4) -> None:
+    def __init__(self, source: list[Path] | Path, size: tuple[int, int], fps: float,
+                 n: int | None = None, slots: int = 4) -> None:
+        """``source`` is a sequence's image paths, or one video file (then pass ``n``)."""
+
         self.size = size
         self.fps = fps
         self.slots = slots
-        self.n = len(image_paths)
+        video = not isinstance(source, list)
+        if video and n is None:
+            raise ValueError("a video source needs its frame count n")
+        self.n = n if video else len(source)
         self.frame_bytes = size[0] * size[1] * 3
         self._frames = shared_memory.SharedMemory(create=True, size=slots * self.frame_bytes)
         self._ctl = shared_memory.SharedMemory(create=True, size=_control_size(slots))
@@ -86,7 +92,7 @@ class CameraFeed:
         )
         self._proc.stdin.write(json.dumps({
             "frames": self._frames.name, "control": self._ctl.name, "slots": slots,
-            "size": list(size), "paths": [str(p) for p in image_paths],
+            "size": list(size), **({"video": str(source)} if video else {"paths": [str(p) for p in source]}),
         }).encode("utf-8"))
         self._proc.stdin.close()
         deadline = time.perf_counter() + 60

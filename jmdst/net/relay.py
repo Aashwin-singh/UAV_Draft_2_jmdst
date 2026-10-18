@@ -61,17 +61,24 @@ DIRECTIONS = ("e2g", "g2e")  # edge -> ground, ground -> edge
 
 TELEMETRY_FIELDS = [
     "direction", "seq", "arrival_s", "payload_bytes", "queue_delay_ms",
-    "scheduled_release_s", "actual_release_s", "release_error_ms", "dropped", "drop_reason",
+    "scheduled_release_s", "actual_release_s", "release_error_ms", "dropped", "drop_reason", "head",
 ]
+# Bytes of each payload copied into the log as hex, like a packet capture's
+# snap length. The relay never interprets them; they let a report join packets
+# to the protocol messages they carried (scripts/sim_telemetry.py).
+LOG_HEAD_BYTES = 12
 
 
 @contextlib.contextmanager
 def high_resolution_timer(period_ms: int = 1) -> Iterator[None]:
     """Raise the Windows system timer resolution while the block runs.
 
-    Also opts this process out of Windows 11's background power throttling of
-    timer requests (see module docstring) -- without it the request lapses
-    after ~2 s of mostly-idle waiting.
+    Also opts this process out of Windows 11's background power throttling:
+    of timer requests (see module docstring) -- without it the request lapses
+    after ~2 s of mostly-idle waiting -- and of execution speed (EcoQoS),
+    which can move a windowless process to slower cores and clocks. Every
+    simulation process uses this, so the only limits on a node are the ones
+    the simulation sets deliberately.
     """
 
     if sys.platform != "win32":
@@ -85,9 +92,11 @@ def high_resolution_timer(period_ms: int = 1) -> Iterator[None]:
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.GetCurrentProcess.restype = wt.HANDLE
-    # ProcessPowerThrottling = 4; control IGNORE_TIMER_RESOLUTION (0x4) with
-    # state 0 = "do not ignore". Best effort: older Windows lacks the class.
-    state = _PowerThrottlingState(1, 0x4, 0)
+    # ProcessPowerThrottling = 4. Control EXECUTION_SPEED (0x1) and
+    # IGNORE_TIMER_RESOLUTION (0x4) with state 0 = "never throttle": no
+    # EcoQoS demotion to slow cores/clocks, and timer requests honoured.
+    # Best effort: older Windows lacks the class.
+    state = _PowerThrottlingState(1, 0x1 | 0x4, 0)
     kernel32.SetProcessInformation(wt.HANDLE(kernel32.GetCurrentProcess()), 4, ctypes.byref(state), ctypes.sizeof(state))
 
     winmm = ctypes.WinDLL("winmm")
@@ -141,6 +150,7 @@ class LinkRelay:
         telemetry: TextIO | None = None,
         clock: Callable[[], float] = time.perf_counter,
         ground_bind: tuple[str, int] = ("127.0.0.1", 0),
+        log_head_bytes: int = LOG_HEAD_BYTES,
     ) -> None:
         self.edge_sock = make_udp_socket(edge_bind)
         self.ground_sock = make_udp_socket(ground_bind)
@@ -156,6 +166,7 @@ class LinkRelay:
         self._heap: list = []
         self._tiebreak = itertools.count()
         self._writer = csv.writer(telemetry) if telemetry is not None else None
+        self._log_head_bytes = log_head_bytes
         if self._writer is not None:
             self._writer.writerow(TELEMETRY_FIELDS)
 
@@ -246,9 +257,9 @@ class LinkRelay:
             elif fate.delivered:
                 # Ground spoke before the edge ever did: nowhere to deliver.
                 self.host_drops[direction] += 1
-                self._log(direction, seq, fate, None, "host")
+                self._log(direction, seq, fate, None, "host", payload)
             else:
-                self._log(direction, seq, fate, None, fate.drop)
+                self._log(direction, seq, fate, None, fate.drop, payload)
 
     def _release_due(self) -> None:
         while self._heap and self._heap[0][0] <= self._clock():
@@ -259,13 +270,14 @@ class LinkRelay:
                 # Send buffer full or address unreachable: the host, not the
                 # modelled link, lost it. Counted separately so it is visible.
                 self.host_drops[direction] += 1
-                self._log(direction, seq, fate, None, "host")
+                self._log(direction, seq, fate, None, "host", payload)
                 continue
             actual = self._clock()
             self.release_errors_ms.append((actual - release) * 1e3)
-            self._log(direction, seq, fate, actual, None)
+            self._log(direction, seq, fate, actual, None, payload)
 
-    def _log(self, direction: str, seq: int, fate: PacketFate, actual: float | None, drop: str | None) -> None:
+    def _log(self, direction: str, seq: int, fate: PacketFate, actual: float | None, drop: str | None,
+             payload: bytes = b"") -> None:
         if self._writer is None:
             return
         scheduled = fate.release
@@ -280,4 +292,5 @@ class LinkRelay:
             "" if actual is None or scheduled is None else f"{(actual - scheduled) * 1e3:.3f}",
             0 if drop is None else 1,
             drop or "",
+            payload[: self._log_head_bytes].hex(),
         ])
