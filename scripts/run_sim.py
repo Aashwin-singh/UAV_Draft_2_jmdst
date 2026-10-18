@@ -91,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--port-base", type=int, default=47000, help="Link listens on base, ground on base+1.")
     parser.add_argument("--ground-device", default=None)
+    parser.add_argument("--ground-cache", default=None,
+                        help="Modelled ground station: a detection cache from build_detection_cache.py.")
     parser.add_argument("--host-cpus", default=None,
                         help="Pin ground + link to these CPUs (e.g. 0-15), apart from the edge's --edge-cpus.")
     parser.add_argument("--ground-print-every", type=int, default=0,
@@ -102,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     link_addr, ground_addr = f"127.0.0.1:{args.port_base}", f"127.0.0.1:{args.port_base + 1}"
     (out / "run.json").write_text(json.dumps({
         "e2g": args.e2g, "g2e": args.g2e, "no_link": args.no_link, "edge_args": edge_args,
-        "yolo": args.yolo, "felnet": args.felnet, "ground_device": args.ground_device, "host_cpus": args.host_cpus,
+        "yolo": args.yolo, "felnet": args.felnet, "ground_device": args.ground_device, "host_cpus": args.host_cpus, "ground_cache": args.ground_cache,
     }, indent=2), encoding="utf-8")
 
     py = [sys.executable, "-u"]
@@ -112,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         ground_cmd += ["--device", args.ground_device]
     if args.host_cpus:
         ground_cmd += ["--cpus", args.host_cpus]
+    if args.ground_cache:
+        ground_cmd += ["--detection-cache", args.ground_cache]
     children: list[Child] = []
     try:
         ground = Child("ground", ground_cmd, out / "logs" / "ground.log").start("[ground] listening")

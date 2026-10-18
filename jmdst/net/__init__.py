@@ -1,11 +1,14 @@
 """Edge/ground simulation: network link emulation (netem-equivalent), relay,
 wire protocol, and the edge/ground node logic."""
 
+from .detcache import CachedDetection, DetectionCache
 from .link import GilbertElliott, LinkConfig, LinkModel, PacketFate, parse_netem
 from .nodes import EXCHANGE_FIELDS, Exchange, GroundServer, RemoteDetector, exchange_row
 from .relay import LinkRelay, high_resolution_timer, interrupt_on_ctrl_break, make_udp_socket
 
 __all__ = [
+    "CachedDetection",
+    "DetectionCache",
     "EXCHANGE_FIELDS",
     "Exchange",
     "GilbertElliott",

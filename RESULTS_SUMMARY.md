@@ -302,7 +302,7 @@ embedding dim 16, SSI 64×64.
 | Phases 1–5, 7–11 | Complete, verified, committed |
 | Phase 6 (MSFP) | Not implemented — `mamba-ssm` PyPI sdist ships without its CUDA sources |
 | Adaptive process noise (SAKF-RCE) | Not implemented — ruled out by §4.2: only 5.9/17.9 % of ID switches are association failures, and those occur at ~0.03 box-heights displacement |
-| Unit tests | 181 passing |
+| Unit tests | 183 passing |
 | Splits held out | Test split used once, after config was frozen on val |
 
 ### Deviations from the paper

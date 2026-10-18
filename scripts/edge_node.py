@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from dataclasses import dataclass
 from typing import Callable, Iterator
 import sys
@@ -64,7 +65,7 @@ from jmdst.data.io import iter_sequence_dirs, read_sequence, resolve_image_path
 from jmdst.net import EXCHANGE_FIELDS, RemoteDetector, exchange_row, high_resolution_timer
 from jmdst.net.protocol import CODECS, DEFAULT_MTU
 from jmdst.pipeline.cli import add_tracker_arguments, detector_conf, mot_lines, tracker_from_args
-from jmdst.pipeline.models import FELNetLocalizer, load_felnet
+from jmdst.pipeline.models import FELNetLocalizer, YoloDetector, load_felnet
 from jmdst.sim import CameraFeed, CpuMeter, EdgeHardware, apply_edge_hardware, latest_finished, parse_cpu_list
 
 FRAME_FIELDS = [
@@ -92,6 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_tracker_arguments(parser)
     parser.add_argument("--device", default=None, help="cuda | cpu (a CPU-only edge).")
     parser.add_argument("--max-frames", type=int, default=None, help="Cap frames per sequence (debugging).")
+    parser.add_argument("--detector", default="ground", choices=["ground", "onboard"],
+                        help="ground: offload detection frames (the split design). onboard: the edge runs "
+                             "YOLO itself under its own limits -- the no-network comparison.")
+    parser.add_argument("--yolo", default=None, help="YOLO weights, for --detector onboard.")
     net = parser.add_argument_group("network")
     net.add_argument("--ground", default="127.0.0.1:47000", help="Where to send detection frames (link emulator or ground).")
     net.add_argument("--codec", default="jpeg", choices=sorted(CODECS), help="Frame encoding; raw/png are lossless.")
@@ -177,6 +182,52 @@ def clip_job(args) -> Job:
     return Job(("clip", path.stem), path.stem, list(range(1, n + 1)), size, images, path)
 
 
+def warm_up(localizer, onboard: "OnboardDetector | None") -> float:
+    """Run every edge model once per input shape before the camera clock starts.
+
+    The first call of a model pays CUDA context / kernel selection (or oneDNN
+    primitive creation on CPU): measured 2,075 ms for an onboard YOLO's first
+    frame, after which the real-time camera had moved on 58 frames. FELNet sees
+    batches of N 64x64 crops, so a few batch sizes are warmed; YOLO sees two
+    letterbox shapes (640x352 UAVDT, 640x384 the 16:9 sizes).
+    """
+
+    start = time.perf_counter()
+    image = Image.new("RGB", (1024, 540), (90, 90, 90))
+    for n in (1, 8, 32):
+        boxes = [np.array([40.0 + 25.0 * (i % 36), 100.0 + 30.0 * (i // 36), 30.0, 20.0]) for i in range(n)]
+        for _ in range(2):
+            localizer(image, boxes)
+    if onboard is not None:
+        for size in ((1024, 540), (1920, 1080)):
+            for _ in range(2):
+                onboard(Image.new("RGB", size))
+    return (time.perf_counter() - start) * 1e3
+
+
+class OnboardDetector:
+    """The "fully onboard" design: YOLO runs on the edge itself, no network.
+
+    Mirrors the parts of RemoteDetector the edge loop reads, so both designs
+    share one loop and one set of output files (no exchanges are recorded).
+    """
+
+    def __init__(self, detector) -> None:
+        self.detector = detector
+        self.exchanges: list = []
+        self.context: dict = {}
+        self.last_wait_ms = 0.0  # detection is compute here, not waiting
+
+    def __call__(self, image):
+        return self.detector(image)
+
+    def drain(self, wait_s: float = 0.0) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 class Progress:
     """A status line every few seconds while a sequence runs (for live screenshots)."""
 
@@ -216,8 +267,9 @@ def run_offline(jmdst, remote, job: Job, progress: Progress) -> tuple[list[str],
     return lines, rows, {"processed": len(rows), "busy_s": busy, "fps": len(rows) / busy if busy else 0.0}
 
 
-def run_realtime(jmdst, remote, job: Job, fps: float, progress: Progress) -> tuple[list[str], list[list], dict]:
-    feed = CameraFeed(job.camera_source, job.size, fps, n=len(job.frame_ids))
+def run_realtime(jmdst, remote, job: Job, fps: float, progress: Progress,
+                 camera_cpus: list[int] | None = None) -> tuple[list[str], list[list], dict]:
+    feed = CameraFeed(job.camera_source, job.size, fps, n=len(job.frame_ids), cpus=camera_cpus)
     results: list[tuple[float, list]] = []  # (finish time, outputs), in finish order
     rows: list[list] = []
     try:
@@ -271,20 +323,34 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[edge] tau={args.tau}: 1 frame in {args.tau} is sent to the ground, the rest are tracked locally. "
           + (f"Real time: camera at {args.camera_fps:g} fps, newest frame wins." if args.realtime
              else "Offline: every frame is processed."), flush=True)
-    remote = RemoteDetector(
-        _addr(args.ground), conf=detector_conf(args), iou=args.iou, imgsz=args.imgsz,
-        codec=args.codec, jpeg_quality=args.jpeg_quality, deadline_s=args.deadline_ms / 1e3, mtu=args.mtu,
-    )
-    print(f"[edge] contacting ground via {args.ground} ...", flush=True)
-    info = remote.handshake(timeout_s=args.handshake_timeout)
-    print(f"[edge] ground ready: {info}. codec={args.codec}"
-          + (f" q{args.jpeg_quality}" if args.codec == "jpeg" else "")
-          + f", deadline {args.deadline_ms:.0f} ms", flush=True)
+    if args.detector == "onboard":
+        if not args.yolo:
+            raise SystemExit("--detector onboard needs --yolo (the edge runs the detector itself)")
+        from ultralytics import YOLO
+
+        remote = OnboardDetector(YoloDetector(YOLO(args.yolo), conf=detector_conf(args), iou=args.iou,
+                                              imgsz=args.imgsz, device=device))
+        print(f"[edge] detector ONBOARD: YOLO runs on the edge ({device}) under its limits; no network", flush=True)
+    else:
+        remote = RemoteDetector(
+            _addr(args.ground), conf=detector_conf(args), iou=args.iou, imgsz=args.imgsz,
+            codec=args.codec, jpeg_quality=args.jpeg_quality, deadline_s=args.deadline_ms / 1e3, mtu=args.mtu,
+        )
+        print(f"[edge] contacting ground via {args.ground} ...", flush=True)
+        info = remote.handshake(timeout_s=args.handshake_timeout)
+        print(f"[edge] ground ready: {info}. codec={args.codec}"
+              + (f" q{args.jpeg_quality}" if args.codec == "jpeg" else "")
+              + f", deadline {args.deadline_ms:.0f} ms", flush=True)
+
+    warm_ms = warm_up(localizer, remote if isinstance(remote, OnboardDetector) else None)
+    print(f"[edge] models warmed up before the camera starts ({warm_ms:.0f} ms)", flush=True)
 
     output_root = Path(args.output_root)
     start = time.perf_counter()
     total_frames = 0
     meter = CpuMeter()
+    # The camera is separate hardware: keep it off the edge's cores.
+    camera_cpus = ([c for c in range(os.cpu_count() or 1) if c not in hardware.cpus] if hardware.cpus else None)
     jobs = [clip_job(args)] if args.source else dataset_jobs(args)
     groups: dict[tuple[str, str], list[Job]] = {}
     for job in jobs:
@@ -304,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
                 progress = Progress(job.name, n_frames, remote, args.progress_every)
 
                 if args.realtime:
-                    lines, rows, stats = run_realtime(jmdst, remote, job, args.camera_fps, progress)
+                    lines, rows, stats = run_realtime(jmdst, remote, job, args.camera_fps, progress, camera_cpus)
                 else:
                     lines, rows, stats = run_offline(jmdst, remote, job, progress)
                 remote.drain(wait_s=0.2)  # classify any last reply that arrived after its deadline
@@ -359,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
                 "detection_frames": len(exchanges),
                 "outcomes": {k: sum(e.outcome == k for e in exchanges) for k in ("ok", "lost", "late")},
                 "rtt_ms": {"p50": float(np.percentile(rtts, 50)), "p95": float(np.percentile(rtts, 95))} if rtts else None,
-                "codec": args.codec, "deadline_ms": args.deadline_ms,
+                "detector": args.detector, "codec": args.codec, "deadline_ms": args.deadline_ms,
                 "sequences": per_seq,
             }
             if args.realtime:

@@ -226,7 +226,7 @@ class RemoteDetector:
 
 GROUND_FIELDS = [
     "msg_id", "frame_id", "outcome", "first_arrival_s", "complete_s", "request_bytes", "request_packets",
-    "decode_ms", "detect_ms", "detections", "response_bytes", "response_packets",
+    "decode_ms", "detect_ms", "detections", "response_bytes", "response_packets", "source",
 ]
 
 
@@ -235,6 +235,8 @@ class GroundStats:
     served: int = 0
     incomplete: int = 0
     pings: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
     detect_ms: list[float] = field(default_factory=list)
 
 
@@ -251,7 +253,12 @@ class GroundServer:
         on_event: Callable[[str, dict], None] | None = None,
         incomplete_after_s: float = 2.0,
         clock: Clock = time.perf_counter,
+        cache=None,
     ) -> None:
+        """``cache``: an optional ``DetectionCache`` -- the modelled ground
+        station (see jmdst/net/detcache.py). Hits reply after the frame's
+        recorded unloaded compute time; misses run ``detect`` live."""
+
         import csv
 
         self.sock = make_udp_socket(bind)
@@ -260,6 +267,7 @@ class GroundServer:
         self.info = info or {}
         self.mtu = mtu
         self.incomplete_after_s = incomplete_after_s
+        self.cache = cache
         self.stats = GroundStats()
         self._on_event = on_event or (lambda kind, data: None)
         self._clock = clock
@@ -283,7 +291,7 @@ class GroundServer:
             for gone in self._reassembler.expire(older_than=self._clock() - self.incomplete_after_s):
                 self.stats.incomplete += 1
                 self._log([gone.msg_id, "", "incomplete", f"{gone.first_arrival:.6f}", "", "",
-                           f"{gone.received}/{gone.expected}", "", "", "", "", ""])
+                           f"{gone.received}/{gone.expected}", "", "", "", "", "", ""])
                 self._on_event("incomplete", {"msg_id": gone.msg_id, "received": gone.received, "expected": gone.expected})
 
     def close(self) -> None:
@@ -308,26 +316,39 @@ class GroundServer:
 
     def _serve_request(self, message, addr) -> None:
         req = unpack_request(message.body)
-        t0 = self._clock()
-        image = decode_image(req.codec, req.image_data)
-        t1 = self._clock()
-        detections = self.detect(image, req.conf, req.iou, req.imgsz)
-        t2 = self._clock()
+        hit = self.cache.lookup(req.image_data, req.conf, req.iou, req.imgsz) if self.cache is not None else None
+        if hit is not None:
+            # Modelled compute: reply once this frame's own unloaded
+            # decode + detect time has passed since its last packet arrived.
+            delay = message.complete + hit.compute_ms / 1e3 - self._clock()
+            if delay > 0:
+                time.sleep(delay)
+            detections, decode_ms, detect_ms, source = hit.detections, None, hit.compute_ms, "cache"
+            self.stats.cache_hits += 1
+        else:
+            t0 = self._clock()
+            image = decode_image(req.codec, req.image_data)
+            t1 = self._clock()
+            detections = self.detect(image, req.conf, req.iou, req.imgsz)
+            decode_ms, detect_ms = (t1 - t0) * 1e3, (self._clock() - t1) * 1e3
+            source = "live" if self.cache is None else "live (cache miss)"
+            if self.cache is not None:
+                self.stats.cache_misses += 1
         resp_send = self._clock()
         body = pack_response(DetectResponse(
-            req.frame_id, req.send_s, message.complete, (t2 - t0) * 1e3, resp_send, detections,
+            req.frame_id, req.send_s, message.complete, (resp_send - message.complete) * 1e3, resp_send, detections,
         ))
         sent = self._send(DETECT_RESPONSE, message.msg_id, body, addr)
         self.stats.served += 1
-        self.stats.detect_ms.append((t2 - t1) * 1e3)
+        self.stats.detect_ms.append(detect_ms)
         self._log([
             message.msg_id, req.frame_id, "served", f"{message.first_arrival:.6f}", f"{message.complete:.6f}",
-            message.wire_bytes, message.fragments, f"{(t1 - t0) * 1e3:.3f}", f"{(t2 - t1) * 1e3:.3f}",
-            len(detections), sum(map(len, sent)), len(sent),
+            message.wire_bytes, message.fragments, "" if decode_ms is None else f"{decode_ms:.3f}",
+            f"{detect_ms:.3f}", len(detections), sum(map(len, sent)), len(sent), source,
         ])
         self._on_event("served", {
             "msg_id": message.msg_id, "frame_id": req.frame_id, "request_bytes": message.wire_bytes,
-            "packets": message.fragments, "detections": len(detections), "detect_ms": (t2 - t1) * 1e3,
+            "packets": message.fragments, "detections": len(detections), "detect_ms": detect_ms, "source": source,
         })
 
     def _send(self, msg_type: int, msg_id: int, body: bytes, addr) -> list[bytes]:

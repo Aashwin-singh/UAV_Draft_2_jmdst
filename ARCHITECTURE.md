@@ -10,7 +10,7 @@ this JMDST reproduction. Read alongside:
 
 **Status**: 10 of 11 phases implemented. Only Phase 6 (MSFP) is missing —
 blocked because the PyPI `mamba-ssm` sdist ships without its CUDA sources.
-181 tests pass. Final held-out test results are in `project_log.md`.
+183 tests pass. Final held-out test results are in `project_log.md`.
 
 ---
 
@@ -82,6 +82,7 @@ regenerable. Only code is committed.
 | `jmdst/net/link.py` | edge/ground sim: netem-equivalent link model (delay, jitter, rate, buffer, random/GE loss), netem-syntax parser | — |
 | `jmdst/net/relay.py` | UDP relay applying one link model per direction, per-packet telemetry, Windows timer handling | — |
 | `jmdst/net/protocol.py` | edge<->ground wire format: MTU fragmentation (no retransmission), frame codecs, bit-exact detection replies | — |
+| `jmdst/net/detcache.py` | modelled ground station: detections + each frame's unloaded compute time, keyed by encoded-frame hash | — |
 | `jmdst/net/nodes.py` | `RemoteDetector` (edge: a drop-in `detector` that returns `None` on loss/deadline) and `GroundServer` | — |
 | `jmdst/sim/hardware.py` | edge compute limits via one Windows Job Object: CPU hard cap, core affinity, memory; children break away | — |
 | `jmdst/sim/camera.py` | real-time camera (own process, shared-memory ring, seqlock) and `latest_finished` streaming scoring | — |
@@ -164,13 +165,15 @@ plausible-looking but wrong numbers rather than a crash.
     carry a ground-compute penalty that GPU-edge runs do not. Core pinning
     (`--host-cpus`) and EcoQoS opt-out do not remove it. Read
     `ground_compute_ms` in the telemetry before comparing edge configurations.
+    Sweeps avoid it with the modelled ground (`--ground-cache`), which replies
+    with live-identical detections after each frame's unloaded compute time.
 
 ---
 
 ## Running things
 
 ```bash
-python -m unittest discover -s tests          # 181 tests; use discover, not -m unittest tests.x
+python -m unittest discover -s tests          # 183 tests; use discover, not -m unittest tests.x
 python scripts/run_jmdst.py --yolo <w> --felnet <c> --datasets uavdt --split val --tau 3
 python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val
 python scripts/run_ablations.py --datasets uavdt --split val
@@ -183,6 +186,8 @@ python scripts/link_relay.py --e2g "<netem>" --g2e "<netem>"
 python scripts/edge_node.py --felnet <c> <same tracker args as run_jmdst.py>
 python scripts/verify_realtime_replay.py --run <run_sim output> --dataset uavdt   # real-time run must replay byte-identically
 python scripts/sim_telemetry.py --run <edge output-root>   # per-detection-frame telemetry + run summary (snapshot 4.11)
+python scripts/build_detection_cache.py --yolo <w> --datasets uavdt visdrone --split val --conf 0.55 --byte --byte-low-conf 0.4 --output <npz>   # idle machine only
+python scripts/run_sweep.py --plan configs/sweeps/edge_ground_val.json   # resumable; then scripts/sweep_report.py --results <out>/results.csv
 python scripts/link_relay.py --e2g "delay 40ms rate 8mbit loss 1%" --g2e "delay 40ms"   # run the emulator
 ```
 

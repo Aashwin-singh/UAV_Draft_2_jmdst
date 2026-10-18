@@ -5,6 +5,52 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## Edge/ground simulation, Phase 5 (part 1) — modelled ground + sweep tooling (2026-10-18)
+
+**Modelled ground station** (`jmdst/net/detcache.py`, chosen over live YOLO
+for sweeps because of the power coupling found in Phase 4). The ground's
+output depends only on the bytes it receives, so
+`scripts/build_detection_cache.py` runs the ground's exact path once per frame
+on an **idle machine** (CPU 6% at start) and records the detections plus that
+frame's own decode + YOLO time, keyed by the SHA-256 of the encoded frame. In a
+sweep (`ground_node.py --detection-cache`, `run_sim.py --ground-cache`) the
+ground replies once the frame's recorded time has passed; a miss falls back to
+live YOLO and is counted. Cache: 7,499 frames (UAVDT + VisDrone val + the three
+demo clips). Per-frame compute model, median: UAVDT ~15 ms; VisDrone 18-54 ms
+(the 2688x1512 sequence costs 54 ms: decode + letterbox of large frames).
+
+**Verified exact**: offline UAVDT val through the modelled ground, **829
+hits, 0 misses, 3/3 sequences byte-identical** to the live-YOLO ground
+(`outputs/sim/offval_jpeg`). Detections are unchanged; only the ground's
+timing is now controlled and independent of the edge's CPU load, and the GPU
+is left to the edge alone, as on separate hardware.
+
+**Onboard design** (`edge_node.py --detector onboard --yolo ...`): the edge
+runs YOLO itself under its own limits, no network, the comparison for "is
+offloading worth it". **Camera kept off the edge's cores**: it escaped the
+cap but could still run *on* the edge's CPUs; it now gets every CPU except the
+edge's.
+
+**Edge warm-up — a cold start that also touched earlier real-time runs.** The
+pilot showed an onboard edge's first frame taking 2,075 ms (CUDA init), during
+which the camera moved on 58 frames; FELNet's first call is cold too (202 ms).
+The edge now warms every model before the camera clock starts: onboard GPU
+first-frame latency 2,075 -> 20 ms, frames processed 122/180 -> 180/180. The
+Phase 3 runs started cold on their first sequence (the 11-frame initial
+display lag seen on M0203); the sweep's hardware group supersedes them.
+
+**Sweep tooling**: `configs/sweeps/edge_ground_val.json` (24 configurations:
+edge hardware GPU / 8 / 4 / 2 / 1 E-cores; onboard GPU / 8 / 4 E-cores; one-way
+delay 0-100 ms; uplink 5-100 Mbit/s; loss 0-5% random + Gilbert-Elliott;
+deadline 100/150/250 ms; base = 4 E-cores, 10 ms +-2, 50 Mbit/s, no loss,
+150 ms), `scripts/run_sweep.py` (resumable; collects `results.csv`) and
+`scripts/sweep_report.py` (Markdown tables + small-multiple charts; palette
+validated, CVD dE 24.7). Pilot (6 configurations x 60 frames per sequence):
+runner, scoring, report all work end to end, 0 cache misses. Pilot HOTA is
+meaningless (60 frames scored against full sequences).
+
+183 tests pass.
+
 ## Edge/ground simulation, Phase 4 — snapshot telemetry (4.10 / 4.11) (2026-10-18)
 
 **Snapshots 4.10 and 4.11 are now produced from the real system**

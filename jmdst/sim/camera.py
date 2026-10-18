@@ -66,8 +66,13 @@ class CameraFeed:
     """Edge-side handle on a camera process replaying one sequence."""
 
     def __init__(self, source: list[Path] | Path, size: tuple[int, int], fps: float,
-                 n: int | None = None, slots: int = 4) -> None:
-        """``source`` is a sequence's image paths, or one video file (then pass ``n``)."""
+                 n: int | None = None, slots: int = 4, cpus: list[int] | None = None) -> None:
+        """``source`` is a sequence's image paths, or one video file (then pass ``n``).
+
+        ``cpus``: run the camera on these logical CPUs. The edge passes every
+        CPU *except* its own, so decoding never competes for the cores whose
+        time the edge was promised.
+        """
 
         self.size = size
         self.fps = fps
@@ -95,6 +100,10 @@ class CameraFeed:
             "size": list(size), **({"video": str(source)} if video else {"paths": [str(p) for p in source]}),
         }).encode("utf-8"))
         self._proc.stdin.close()
+        if cpus:
+            import psutil
+
+            psutil.Process(self._proc.pid).cpu_affinity(list(cpus))
         deadline = time.perf_counter() + 60
         while not self._ints[_READY]:
             if self._proc.poll() is not None:

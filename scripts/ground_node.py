@@ -24,10 +24,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import numpy as np
 import torch
 from PIL import Image
 
-from jmdst.net import GroundServer, high_resolution_timer, interrupt_on_ctrl_break
+from jmdst.net import DetectionCache, GroundServer, high_resolution_timer, interrupt_on_ctrl_break
 from jmdst.pipeline.models import YoloDetector
 
 
@@ -43,6 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=None)
     parser.add_argument("--telemetry", default=None, help="Per-request CSV log path.")
     parser.add_argument("--print-every", type=int, default=30, help="Print one 'serving' line per N requests (0 = none).")
+    parser.add_argument("--detection-cache", default=None,
+                        help="Modelled ground: reply from this cache after each frame's recorded unloaded "
+                             "compute time (scripts/build_detection_cache.py). Misses run YOLO live.")
     parser.add_argument("--cpus", default=None, help="Pin to these logical CPUs, e.g. 0-15, away from the edge's.")
     return parser
 
@@ -82,7 +86,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"[ground] serving frame {data['frame_id']} (msg {data['msg_id']}): "
                 f"{data['request_bytes'] / 1e3:.1f} KB in {data['packets']} packets -> "
-                f"{data['detections']} detections, YOLO {data['detect_ms']:.1f} ms",
+                f"{data['detections']} detections, "
+                + (f"YOLO {data['detect_ms']:.1f} ms" if data["source"] != "cache" else f"modelled {data['detect_ms']:.1f} ms"),
                 flush=True,
             )
         elif kind == "incomplete":
@@ -93,8 +98,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.telemetry:
         Path(args.telemetry).parent.mkdir(parents=True, exist_ok=True)
         log_file = open(args.telemetry, "w", newline="", encoding="utf-8")
+    cache = None
+    if args.detection_cache:
+        cache = DetectionCache.load(args.detection_cache)
+        ms = cache.compute_ms_values()
+        print(f"[ground] modelled compute: {len(cache)} cached frames, median {float(np.median(ms)):.1f} ms per frame "
+              f"(measured unloaded, {cache.meta.get('built', '?')}); cache misses run YOLO live", flush=True)
     server = GroundServer(
-        _addr(args.listen), detect,
+        _addr(args.listen), detect, cache=cache,
         info={"model": Path(args.yolo).parts[-3] if len(Path(args.yolo).parts) >= 3 else args.yolo, "device": device},
         telemetry=log_file, on_event=on_event,
     )
@@ -108,7 +119,8 @@ def main(argv: list[str] | None = None) -> int:
         s = server.stats
         mean = f"{statistics.fmean(s.detect_ms):.1f} ms" if s.detect_ms else "n/a"
         print(f"[ground] stopped. served {s.served} detection requests, {s.incomplete} arrived incomplete, "
-              f"mean YOLO {mean}", flush=True)
+              f"mean compute {mean}"
+              + (f"; cache hits {s.cache_hits}, misses {s.cache_misses}" if cache is not None else ""), flush=True)
         server.close()
         if log_file is not None:
             log_file.close()

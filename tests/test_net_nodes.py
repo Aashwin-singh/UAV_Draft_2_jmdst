@@ -85,6 +85,33 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(unpack_response(pack_response(DetectResponse(1, 0, 0, 0, 0, []))).detections, [])
 
 
+class DetectionCacheTests(unittest.TestCase):
+    def test_save_load_round_trip_and_parameter_guard(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from jmdst.net import DetectionCache
+
+        cache = DetectionCache({"conf": 0.4, "iou": 0.2, "imgsz": 640, "note": "x"})
+        dets = [(np.array([1.0, 2.0, 3.0, 4.0]), 0.5), (np.array([5.0, 6.0, 7.0, 8.0]), 1 / 3)]
+        cache.add(b"frame-a", dets, 12.5)
+        cache.add(b"frame-b", [], 9.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.npz"
+            cache.save(path)
+            loaded = DetectionCache.load(path)
+        self.assertEqual(len(loaded), 2)
+        self.assertEqual(loaded.meta["note"], "x")
+        hit = loaded.lookup(b"frame-a", 0.4, 0.2, 640)
+        self.assertEqual(hit.compute_ms, 12.5)
+        for (b0, c0), (b1, c1) in zip(dets, hit.detections):
+            self.assertTrue(np.array_equal(b0, b1))
+            self.assertEqual(c0, c1)
+        self.assertEqual(loaded.lookup(b"frame-b", 0.4, 0.2, 640).detections, [])
+        self.assertIsNone(loaded.lookup(b"frame-c", 0.4, 0.2, 640))
+        self.assertIsNone(loaded.lookup(b"frame-a", 0.55, 0.2, 640))  # other post-processing: miss, not a wrong answer
+
+
 class _FakeYolo:
     """Deterministic stand-in: one box whose values encode what it was asked."""
 
@@ -157,6 +184,33 @@ class NodeTests(unittest.TestCase):
         ex = remote.exchanges[0]
         self.assertEqual(ex.outcome, "late")
         self.assertGreaterEqual(ex.uplink_ms, 120.0)
+
+    def test_modelled_ground_replies_from_cache_after_its_compute_time(self) -> None:
+        from jmdst.net import DetectionCache
+
+        img = _image((320, 180))
+        cache = DetectionCache({"conf": 0.4, "iou": 0.2, "imgsz": 640})
+        cached = [(np.array([1.5, 2.5, 30.0, 20.0]), 0.77)]
+        cache.add(encode_image(img, "jpeg", 90), cached, compute_ms=60.0)
+        fake = _FakeYolo()
+        ground = GroundServer(("127.0.0.1", 0), fake, cache=cache)
+        stop = threading.Event()
+        thread = threading.Thread(target=ground.serve, args=(stop,), daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (stop.set(), thread.join(2), ground.close()))
+        remote = RemoteDetector(ground.address, conf=0.4, iou=0.2, imgsz=640, codec="jpeg", deadline_s=2.0)
+        self.addCleanup(remote.close)
+
+        box, conf = remote(img)[0]
+        self.assertTrue(np.array_equal(box, cached[0][0]))
+        self.assertEqual(conf, 0.77)
+        self.assertEqual(fake.calls, [])  # no live YOLO for a hit
+        ex = remote.exchanges[0]
+        self.assertGreaterEqual(ex.response_send_s - ex.ground_arrival_s, 0.060)  # modelled compute honoured
+
+        remote(_image((160, 90)))  # not in the cache -> live
+        self.assertEqual(len(fake.calls), 1)
+        self.assertEqual((ground.stats.cache_hits, ground.stats.cache_misses), (1, 1))
 
     def test_handshake_fails_loudly_when_ground_is_down(self) -> None:
         relay = self._relay(("127.0.0.1", 9), LinkConfig(), LinkConfig())  # nothing listens there
