@@ -60,25 +60,19 @@ single-process and the split system — nothing was duplicated.
 | Camera, hardware limits, streaming scoring, telemetry | 10 |
 | Data pipeline, demo, export, verification | 24 |
 
-**Level 2 — component calibration (each part measured against its spec).**
-* Network emulator: **29/29 checks** — configured vs measured delay, jitter,
-  loss rate, burst length, throughput, buffer overflow. Release timing within
-  1.2 ms (p95) of schedule. (`scripts/calibrate_link.py`)
-* CPU cap: 4 busy threads capped at 1 core used 1.14; a 1 GB memory cap
-  refused a 2 GB allocation.
+**Levels 2 and 3 — every component checked against a reference it must match.**
 
-**Level 3 — integration: the split system must equal the single process.**
-* Over a perfect link with lossless frames, **all 13 val sequences are
-  byte-identical** to the single-process tracker (5.35 M packets, 0 lost).
-* The modelled ground station gives **byte-identical** output to live YOLO
-  (829 detection frames, 0 cache misses).
-* Real-time runs cannot be compared to a fixed reference (they depend on
-  timing), so each is **replayed deterministically: 3/3 sequences
-  byte-identical**, on GPU and CPU-limited edges.
-
-**Level 4 — system evaluation.**
-* Tracker accuracy on the held-out test split (Section 4).
-* Deployment sweep: edge hardware × network conditions (Section 5).
+| Level | Check | Compared against | Result |
+|---|---|---|---|
+| 2 | Network emulator | its own configured delay, jitter, loss, burst length, throughput, buffer | **29/29 checks pass**; packets released within 1.2 ms (p95) of schedule |
+| 2 | UAV CPU cap | the configured budget (1.0 core) | 4 busy threads held to 1.14 cores |
+| 2 | UAV memory cap | the configured limit (1 GB) | a 2 GB allocation refused |
+| 3 | Split system, perfect link, lossless frames | the original single-process tracker | **byte-identical, 13/13 val sequences** (5.35 M packets, 0 lost) |
+| 3 | Modelled ground station | live YOLO on the ground | **byte-identical**, 829 detection frames, 0 cache misses |
+| 3 | Real-time runs (timing-dependent) | a deterministic replay of the same run | **byte-identical**, 3/3 sequences, GPU and CPU UAVs |
+| 3 | Box-size fix after the 2% loss crash | output before the fix | **identical, 13/13 val sequences** |
+| 4 | Tracker accuracy | the paper's published tables | Section 4 |
+| 4 | Deployment sweep | — | Section 5 |
 
 **Testing found real defects** — each would have produced plausible but wrong
 numbers, not a crash:
@@ -96,77 +90,105 @@ numbers, not a crash:
 
 ## 4. Tracker results (held-out test split)
 
-| | UAVDT (ours / paper) | VisDrone (ours / paper) |
-|---|---|---|
-| HOTA | 47.8 / 60.1 | **49.3 / 46.4** |
-| MOTA | 55.4 / 67.3 | 44.6 / 44.9 |
-| IDF1 | 59.7 / 73.5 | 59.7 / 62.4 |
-| FPS | 26.9 / 26.6 | 15.6 / 18.6 |
+| Metric | UAVDT ours | UAVDT paper | VisDrone ours | VisDrone paper |
+|---|---:|---:|---:|---:|
+| HOTA | 47.8 | 60.1 | **49.3** | 46.4 |
+| MOTA | 55.4 | 67.3 | 44.6 | 44.9 |
+| IDF1 | 59.7 | 73.5 | 59.7 | 62.4 |
+| FPS | 26.9 | 26.6 | 15.6 | 18.6 |
 
-On VisDrone the reproduction **matches the paper on MOTA and exceeds it on
-HOTA**; UAVDT trails. Splits are not the paper's (it never published them), so
-the comparison is indicative.
+Takeaway: VisDrone matches the paper on MOTA and beats it on HOTA; UAVDT
+trails. Splits are not the paper's (never published), so this is indicative.
 
 ## 5. Deployment results (simulation)
 
-UAVDT val (3 sequences, 2,484 frames). Real-time camera at 30 fps, scored
-the way an operator would see it (each frame shows the newest *finished*
-result). Modelled ground station: live-identical detections, 0 cache misses.
-Base: a **4-core CPU UAV**, link 10 ms ±2 each way, 50 Mbit/s, no loss,
-150 ms reply deadline. For scale: the same tracker with no clock (every frame
-processed) scores HOTA 45.8. Full tables and charts:
-`outputs/sim/sweep_quick/report/report.md`.
+Full tables and charts: `outputs/sim/sweep_quick/report/report.md`.
 
-**Where should detection run? (HOTA, frames processed)**
+**5.1 Setup**
 
-| UAV compute | Split: YOLO on ground | Onboard: YOLO on the UAV |
-|---|---|---|
-| GPU | 39.2 (85%) | **43.6** (100%) |
-| 4 CPU cores | **36.8** (64%) | 22.5 (20%) |
-| 1 CPU core | 32.4 (44%) | — |
+| Setting | Value |
+|---|---|
+| Data | UAVDT val, 3 sequences, 2,484 frames |
+| Camera | real time, 30 fps; a frame the UAV is too busy for is skipped |
+| Scoring | each frame scored against the newest *finished* result (what an operator sees) |
+| Ground station | modelled: live-identical detections, 0 cache misses |
+| Base UAV | 4 CPU cores |
+| Base link | 10 ms ±2 each way, 50 Mbit/s uplink, no loss |
+| Reply deadline | 150 ms |
 
-* **With a GPU on the UAV, keep detection onboard** (+4.4 HOTA): it avoids a
-  58 ms network round trip on every detection frame.
-* **Without one, offloading is decisive: +14.3 HOTA on 4 cores.** YOLO on a
-  CPU takes up to 458 ms a frame, so the UAV processes only 20% of frames.
-* **The split design degrades gracefully** as the UAV gets weaker (39.2 ->
-  36.8 -> 32.4), because only 1 frame in 3 ever leaves the aircraft.
+**5.2 Where should detection run? (HOTA)**
 
-**What does the network cost? (4-core UAV)**
+| UAV computer | Split: YOLO on ground | Onboard: YOLO on the UAV | Better | Margin |
+|---|---:|---:|---|---:|
+| GPU | 39.2 | **43.6** | onboard | +4.4 |
+| 4 CPU cores | **36.8** | 22.5 | split | +14.3 |
+| 1 CPU core | 32.4 | — | split | — |
 
-| Condition | HOTA | Replies on time | Frames processed |
-|---|---:|---:|---:|
-| Base: 10 ms, 50 Mbit/s, no loss | 36.8 | 100% | 64% |
-| 0.5% packet loss | 26.1 | 71% | 52% |
-| 2% packet loss | 9.0 | 18% | 38% |
-| 10 Mbit/s uplink | 23.0 | 60% | 46% |
-| 50 ms one-way delay | 25.3 | 76% | 40% |
+Takeaway: offload detection only when the UAV has no GPU.
 
-**The network matters more than the UAV's compute.** Two mechanisms, both
-visible in the telemetry:
+**5.3 How much computer does the UAV need? (split design)**
 
-1. **One lost packet loses the whole frame.** A detection frame is ~75 packets
-   and there is no retransmission, so 0.5% packet loss loses ~30% of frames
-   (theory 0.995^75 = 69% survive; measured 71%).
-2. **Every lost or late reply stalls the UAV for the full 150 ms deadline**
-   (Algorithm 1 waits for frame t's detections), so the camera moves on ~4
-   frames each time. A slow link (10 Mbit/s: 72 ms just to send a frame) or
-   high latency (round trip 143 ms against a 150 ms deadline) does the same by
-   pushing replies past the deadline.
+| UAV computer | HOTA | Frames processed | Frame latency p50 | Frame latency p95 |
+|---|---:|---:|---:|---:|
+| GPU | 39.2 | 85% | 41 ms | 74 ms |
+| 4 CPU cores | 36.8 | 64% | 69 ms | 99 ms |
+| 1 CPU core | 32.4 | 44% | 88 ms | 148 ms |
+| *Onboard, 4 CPU cores (for contrast)* | *22.5* | *20%* | *87 ms* | *458 ms* |
 
-Next steps this points to: tuning the deadline, forward error correction or
-selective retransmission, smaller frames (JPEG quality, regions of interest),
-and using late detections asynchronously (a measured departure from Alg. 1).
+Takeaway: the split design degrades gracefully, because only 1 frame in 3
+leaves the aircraft.
 
-**Consistency check:** the onboard GPU UAV processes every frame and shows the
-previous frame's result, so it should score like the offline output shifted
-one frame — predicted 43.8, measured 43.6.
+**5.4 What does the network cost? (4-core UAV)**
 
-Caveats: UAVDT only (VisDrone is in the full 24-configuration plan,
-`configs/sweeps/edge_ground_val.json`, ~2 h); one run per configuration. MOTA
-is strongly negative under real-time scoring on UAVDT (its partial labelling
-plus displayed boxes one frame stale), so HOTA is the headline, as elsewhere in
-this project.
+| Condition | HOTA | Change vs base | Replies on time | Frames processed | Round trip p50 |
+|---|---:|---:|---:|---:|---:|
+| Base: 10 ms, 50 Mbit/s, no loss | 36.8 | — | 100% | 64% | 58 ms |
+| 0.5% packet loss | 26.1 | −10.7 | 71% | 52% | 57 ms |
+| 2% packet loss | 9.0 | −27.8 | 18% | 38% | 56 ms |
+| 10 Mbit/s uplink | 23.0 | −13.8 | 60% | 46% | 120 ms |
+| 50 ms one-way delay | 25.3 | −11.5 | 76% | 40% | 143 ms |
+
+Takeaway: the network costs more than the UAV's computer. Every lost or late
+reply stalls the UAV for the full 150 ms deadline, so the camera moves on ~4
+frames each time.
+
+**5.5 Why packet loss hurts so much: one lost packet loses the whole frame**
+
+| Run | Packets per frame | Packet loss | Frames surviving, theory | Measured |
+|---|---:|---:|---:|---:|
+| Demo snapshot (clip) | ~158 | 0.1% | 0.999^158 = 85% | 85.5% |
+| Sweep | ~75 | 0.5% | 0.995^75 = 69% | 71% |
+| Lossy-link test | ~70 | 2% | 0.98^70 = 24% | 23% |
+
+Takeaway: there is no retransmission, so frame loss grows with frame size;
+theory and measurement agree.
+
+**5.6 What real time costs (UAVDT val, HOTA)**
+
+| Configuration | HOTA | Change |
+|---|---:|---:|
+| Offline, lossless frames, every frame processed | 46.6 | — |
+| Offline, JPEG frames | 45.8 | −0.8 |
+| Offline JPEG, shown one frame late (theory for a perfect real-time UAV) | 43.8 | −2.0 |
+| Real time, onboard GPU (no network) | 43.6 | −0.2 |
+| Real time, split, GPU UAV (58 ms round trip) | 39.2 | −4.4 |
+| Real time, split, 4 CPU cores | 36.8 | −2.4 |
+| Real time, split, 1 CPU core | 32.4 | −4.4 |
+
+Takeaway: the onboard GPU run matches theory (43.6 vs 43.8), which confirms the
+real-time scoring; then each step down in network or compute costs 2–4 HOTA.
+
+**5.7 What the results point to next**
+
+| Problem | Possible fix |
+|---|---|
+| One lost packet loses a whole frame | forward error correction, or retransmit missing packets within the deadline |
+| Large frames take long to send | lower JPEG quality, or send only regions of interest |
+| A lost reply stalls the UAV for the full deadline | a shorter deadline, or use late detections asynchronously (a measured departure from Algorithm 1) |
+| Only UAVDT measured | run the full 24-configuration plan (`configs/sweeps/edge_ground_val.json`, ~2 h) for VisDrone too |
+
+Caveats: one run per configuration; HOTA is the headline because UAVDT's
+partial labelling makes MOTA strongly negative under real-time scoring.
 
 ## 6. Honest limitations
 
