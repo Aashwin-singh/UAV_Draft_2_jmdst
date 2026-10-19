@@ -69,3 +69,6 @@ Thumbs.db
 
 # Handover snapshots: regenerable evidence artifacts, HANDOVER.md is the doc.
 /handover/snapshots/
+
+# Reference papers are not committed (publisher copyright); keep them outside the repo.
+/*.pdf
