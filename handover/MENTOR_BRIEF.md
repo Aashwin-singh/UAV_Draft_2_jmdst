@@ -1,4 +1,4 @@
-# JMDST — integration & testing brief
+# UAV vehicle tracking — integration & testing brief
 
 For the mentor review. One page of substance, then the demo script.
 
@@ -6,10 +6,12 @@ For the mentor review. One page of substance, then the demo script.
 
 ## 1. What the system is
 
-A reproduction of **JMDST** (She et al., *Aerospace Science and Technology*
-171, 2026): UAV vehicle tracking that runs the heavy detector (YOLOv11) only
-on every τ-th frame (τ = 3) and tracks the frames in between with a light
-single-target network (FELNet) and a Kalman filter.
+Our UAV vehicle-tracking system. It builds on the **JMDST** framework (She et
+al., *Aerospace Science and Technology* 171, 2026): run the heavy detector
+(YOLOv11) only on every τ-th frame (τ = 3) and track the frames in between with
+a light single-target network (FELNet) and a Kalman filter. Our additions: a
+retrained YOLOv11m, IoU-only association, NSA Kalman, camera-motion
+compensation, BYTE association, and the deployment simulation below.
 
 It is now integrated as a **split UAV / ground-station deployment**:
 

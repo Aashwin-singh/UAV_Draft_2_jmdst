@@ -47,7 +47,7 @@ from torch import Tensor, nn
 class FELNetConfig:
     """Configuration for FELNet.
 
-    Defaults reproduce the paper. ``embedding_dim`` is the paper's 16-D
+    Defaults follow the paper. ``embedding_dim`` is the paper's 16-D
     feature length (Table 7); ``grid_size`` 2 yields the paper's four
     32x32 anchors over a 64x64 SSI.
     """

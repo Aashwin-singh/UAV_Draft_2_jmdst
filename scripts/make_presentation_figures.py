@@ -1,4 +1,4 @@
-"""Generate the figure set for presenting this reproduction (per-phase evidence).
+"""Generate the figure set for presenting this project (per-phase evidence).
 
 Produces, into --output-dir:
   fig1_dataset_gt.jpg        GT boxes on a real frame (Phase 1)

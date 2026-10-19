@@ -1,6 +1,7 @@
 # Project Log
 
-Running status for the JMDST reproduction, for teammates picking up work in
+Running status for this project (UAV vehicle tracking, built on JMDST), for
+teammates picking up work in
 parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
@@ -755,7 +756,7 @@ Config frozen from val: `retrain_aug_m_lowlr` + `full_run` + IoU-only +
 | IDF1 | 59.7 | 62.4 (-2.7) | 66.0 (-6.3) |
 | IDs | 317 | 178 | 161 |
 
-**On VisDrone the reproduction now ties the published JMDST on MOTA (44.6 vs
+**On VisDrone our system now ties the published JMDST on MOTA (44.6 vs
 44.9) and beats it on HOTA, AssA, DetA and MOTP — and edges QDTrack, the
 strongest baseline in the paper's own Table 6, on HOTA and AssA.** ID switches
 remain the standing weakness (317 vs 178).
@@ -968,7 +969,7 @@ conf 0.55 + tau 3 + `--nsa --cmc`. Nothing tuned on test.
 | DetA | 48.1 | 59.0 | -10.9 |
 | AssA | 46.5 | 61.3 | -14.8 |
 
-**On VisDrone the reproduction now exceeds the published JMDST on HOTA, DetA,
+**On VisDrone our system now exceeds the published JMDST on HOTA, DetA,
 AssA and MOTP**, on held-out data, and its AssA (59.1) also edges QDTrack's
 58.9 — the strongest baseline in the paper's own Table 6. MOTA, IDF1, IDs and
 FPS remain behind. **UAVDT still trails on every metric.**
@@ -1045,7 +1046,7 @@ of the NSA work below. All rows: `retrain_aug_m_lowlr` + `full_run` + IoU-only
    pedestrian cameras; this is the condition CMC actually exists for. Their
    figure was a floor, not an expectation.
 
-**Where this puts the reproduction (val, and split-mismatched — see caveats):**
+**Where this puts our system (val, and split-mismatched — see caveats):**
 VisDrone MOTA 54.6 / HOTA 51.1 / DetA 48.7 now **exceeds the paper's published
 JMDST** (44.9 / 46.4 / 38.0) and also QDTrack, the strongest baseline in the
 paper's own Table 6 (49.5 / 49.0). AssA (54.1 vs 56.9) and IDs (560 vs 178)
@@ -1207,7 +1208,7 @@ Detector work drove all of it, on genuinely unseen data.
 
 **VisDrone detection accuracy is within 0.9 DetA and 1.9 HOTA of the published
 paper** on held-out data, with different splits. That is a credible
-reproduction on that dataset.
+implementation of the base method on that dataset.
 
 **Diagnosis update for UAVDT — association is now the larger gap, not
 detection.** On val the UAVDT shortfall looked detection-driven (DetA -22).
@@ -1503,7 +1504,7 @@ variant were run, as a clean A/B of association alone.
    composition: the paper never publishes its sequence names, so our splits are
    seeded-random, and UAVDT val happened to contain the pathological M1101
    (MOTA -18 to -38) while VisDrone test drew harder sequences. **Practical
-   consequence: single-split numbers from this reproduction carry large
+   consequence: single-split numbers from this project carry large
    variance and should be quoted with the per-sequence spread, not alone.**
 3. **Speed matches or beats the paper on both datasets.** UAVDT 36.0-46.9 FPS
    vs the paper's 26.6; VisDrone 18.3-20.9 vs 18.6. (Newer GPU — RTX 4070 vs
@@ -1585,7 +1586,7 @@ tau=1 (detect every frame) is a reference baseline the paper's table omits.
 | 5 | 14.9 | 76.0 | 44.5 | 34.4 | 31.3 | 37.9 | 126 | 8959 | 10429 | 55.9 |
 | 6 | 11.0 | 75.9 | 43.4 | 33.7 | 29.5 | 38.6 | 120 | 9189 | 11100 | **57.2** |
 
-**Reproduced 3 of the paper's 4 trends** (checked programmatically over
+**Matched 3 of the paper's 4 trends** (checked programmatically over
 tau=2..6): MOTA decreases monotonically ✓, FPS increases monotonically ✓,
 FN increases ✓. **Diverged on FP**: the paper's FP *decreases* with tau
 (14416 -> 11747), ours *increases* (6916 -> 9189).

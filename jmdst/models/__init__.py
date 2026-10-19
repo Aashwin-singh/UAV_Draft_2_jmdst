@@ -1,4 +1,4 @@
-"""Model definitions for the JMDST reproduction."""
+"""Model definitions (FELNet and its heads)."""
 
 from .felnet import (
     FELNet,

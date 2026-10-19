@@ -1,17 +1,19 @@
-# JMDST Reproduction — Project Context
+# Project Context — UAV vehicle tracking, built on JMDST
 
 This document is the persistent reference for this capstone project. It combines
-(1) the exact technical specification extracted from the source paper, and
+(1) the exact technical specification of the JMDST method this project builds
+on, and
 (2) the current implementation status. Treat Section A as ground truth for
 correctness — implement against it directly rather than re-deriving details
 from memory or from re-reading the PDF each session.
 
-**Source paper:** J. She, Y. Liu, R. Zhou, N. Qi, "Joint multi-target detection
+**Base method:** J. She, Y. Liu, R. Zhou, N. Qi, "Joint multi-target detection
 and single-target tracking framework for vehicles tracking based on UAV,"
 *Aerospace Science and Technology*, 171 (2026) 111625.
 
-**Prime directive:** Reproduce the paper faithfully first. Do not simplify the
-architecture or substitute easier alternatives (e.g. no YOLO+ByteTrack shortcut).
+**Prime directive:** Implement the base method faithfully first, then extend it,
+with every change measured against it. Do not simplify the architecture or
+substitute easier alternatives (e.g. no YOLO+ByteTrack shortcut).
 Implement and verify one module at a time. Commit to git after every verified
 milestone. Do not proceed to the next phase until the current one is verified.
 

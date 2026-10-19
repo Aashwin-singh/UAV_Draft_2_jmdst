@@ -1,7 +1,7 @@
 # Architecture & handoff guide
 
 Code map and hard-won invariants for making **architecture-level changes** to
-this JMDST reproduction. Read alongside:
+this project. Read alongside:
 
 - `PROJECT_CONTEXT.md` — **Section A is the paper spec and is ground truth.**
   Implement against it rather than re-deriving from the PDF.

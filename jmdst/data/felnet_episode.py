@@ -1,6 +1,6 @@
 """Episode sampler for FELNet training (paper Algorithm 2).
 
-Each episode reproduces the paper's dense random sampling strategy:
+Each episode implements the paper's dense random sampling strategy:
 
     k ~ Uniform[1, k_max]
     sample N_o frames from one sequence at interval k

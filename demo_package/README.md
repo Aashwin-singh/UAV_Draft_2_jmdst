@@ -1,4 +1,4 @@
-# JMDST live demo package
+# UAV vehicle tracking — live demo package
 
 Self-contained. Needs no datasets, no training, no network.
 

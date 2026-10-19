@@ -1,4 +1,4 @@
-"""Tracking infrastructure for the JMDST reproduction (Phases 7-8)."""
+"""Tracking infrastructure (Phases 7-8)."""
 
 from .cmc import CameraMotionCompensator
 from .kalman_filter import KalmanFilter, xyah_to_xywh, xywh_to_xyah

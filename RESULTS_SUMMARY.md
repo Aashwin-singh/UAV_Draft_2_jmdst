@@ -1,6 +1,6 @@
-# JMDST Reproduction — Results Summary
+# Results Summary — UAV vehicle tracking, built on JMDST
 
-**Source paper:** J. She, Y. Liu, R. Zhou, N. Qi, "Joint multi-target detection and
+**Base method:** J. She, Y. Liu, R. Zhou, N. Qi, "Joint multi-target detection and
 single-target tracking framework for vehicles tracking based on UAV,"
 *Aerospace Science and Technology* 171 (2026) 111625.
 
@@ -243,7 +243,7 @@ UAVDT val, `uavdt_only` detector, conf 0.55.
 | 5 | 14.9 | 76.0 | 44.5 | 34.4 | 31.3 | 37.9 | 126 | 8959 | 10429 | 55.9 |
 | 6 | 11.0 | 75.9 | 43.4 | 33.7 | 29.5 | 38.6 | 120 | 9189 | 11100 | **57.2** |
 
-Paper trends reproduced: MOTA ↓ with τ, FPS ↑ with τ, FN ↑ with τ.
+Paper trends confirmed: MOTA ↓ with τ, FPS ↑ with τ, FN ↑ with τ.
 Diverged: paper's FP decreases with τ, ours increases.
 
 ---

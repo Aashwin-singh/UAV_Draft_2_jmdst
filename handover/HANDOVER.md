@@ -1,4 +1,4 @@
-# JMDST — handover for evaluation
+# UAV vehicle tracking — handover for evaluation
 
 For teammates presenting without the original author or their laptop.
 

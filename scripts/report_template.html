@@ -1,4 +1,4 @@
-<title>JMDST Reproduction — Results</title>
+<title>UAV Vehicle Tracking — Results</title>
 <style>
   :root {
     --paper:      #F7F8F6;
@@ -212,13 +212,13 @@
 </style>
 
 <header class="masthead col">
-  <p class="eyebrow">Capstone · paper reproduction · results report</p>
-  <h1>Joint Multi-target Detection and Single-target Tracking</h1>
+  <p class="eyebrow">Capstone · UAV vehicle tracking · results report</p>
+  <h1>UAV Multi-Vehicle Tracking with Edge/Ground Deployment</h1>
   <p class="lede">
-    A from-scratch reproduction of the JMDST framework for tracking ground vehicles
-    from UAV footage — dual-branch detection/tracking, a custom feature-encoding and
-    localization network, and modified-DeepSORT association — implemented, verified
-    phase by phase, and evaluated on VisDrone2019-MOT and UAVDT.
+    Our system for tracking ground vehicles from UAV footage, built from scratch on
+    the JMDST framework — dual-branch detection/tracking, a custom feature-encoding
+    and localization network, and modified-DeepSORT association — then extended and
+    evaluated phase by phase on VisDrone2019-MOT and UAVDT.
   </p>
   <p class="cite">
     J. She, Y. Liu, R. Zhou, N. Qi.<br>
@@ -418,7 +418,7 @@
 
     <figure>
       <img src="{{FIG6}}" alt="Six small vehicle crops each with a green ground-truth box and a red predicted box">
-      <figcaption><b>Localization, shown honestly.</b> Green is ground truth, red is FELNet's prediction, decoded from its overlap vector. Some crops align closely, others drift — consistent with the measured mean IoU of <b>0.61</b> on held-out data. Localization is the weaker of FELNet's two jobs and is a known limitation of this reproduction.</figcaption>
+      <figcaption><b>Localization, shown honestly.</b> Green is ground truth, red is FELNet's prediction, decoded from its overlap vector. Some crops align closely, others drift — consistent with the measured mean IoU of <b>0.61</b> on held-out data. Localization is the weaker of FELNet's two jobs and is a known limitation of our implementation.</figcaption>
     </figure>
 
     <figure>
@@ -561,7 +561,7 @@
 
     <figure>
       <img src="{{FIG9}}" alt="Line chart of MOTA, HOTA and IDF1 falling as tau rises while FPS climbs">
-      <figcaption><b>The accuracy/speed trade-off, reproduced.</b> As the detector runs less often, accuracy falls and throughput climbs — the qualitative behaviour the paper's design rests on.</figcaption>
+      <figcaption><b>The accuracy/speed trade-off, confirmed.</b> As the detector runs less often, accuracy falls and throughput climbs — the qualitative behaviour the paper's design rests on.</figcaption>
     </figure>
 
     <div class="table-wrap">
@@ -584,7 +584,7 @@
     <div class="table-wrap">
       <table>
         <caption>Trend agreement with the paper as &tau; increases</caption>
-        <thead><tr><th>Trend</th><th>Paper</th><th>This reproduction</th><th>Agrees</th></tr></thead>
+        <thead><tr><th>Trend</th><th>Paper</th><th>Ours</th><th>Agrees</th></tr></thead>
         <tbody>
           <tr><td>Tracking accuracy (MOTA)</td><td>decreases</td><td>decreases</td><td><span class="chip chip-done">yes</span></td></tr>
           <tr><td>Throughput (FPS)</td><td>increases</td><td>increases</td><td><span class="chip chip-done">yes</span></td></tr>
@@ -595,9 +595,9 @@
     </div>
     <div class="col" style="margin-inline:0">
       <p>
-        Three of four trends reproduce. The false-positive divergence is explainable: in
+        Three of four trends match the paper. The false-positive divergence is explainable: in
         the paper, a longer interval raises the bar a track must clear to be confirmed,
-        filtering spurious detections. In this reproduction the tracking branch itself
+        filtering spurious detections. In our system the tracking branch itself
         generates false positives, because its localization is weaker (IoU 0.61) and
         drifted tracks survive longer when detections are rarer. The same reasoning
         explains why <b>our optimum is &tau;=2 where the paper's is &tau;=3</b> — a weaker
@@ -624,7 +624,7 @@
 
     <div class="col" style="margin-inline:0">
       <div class="note warn">
-        <strong>A negative result, reported as found.</strong> In this reproduction,
+        <strong>A negative result, reported as found.</strong> In our system,
         matching on position alone beats matching on FELNet's learned appearance — on
         both datasets, with both trained versions. Two alternative explanations were
         tested and ruled out: the matching threshold (swept across three values, spanning
@@ -727,7 +727,7 @@
       </p>
       <div class="note warn">
         <strong>What follows from that.</strong> Single-split scores from this
-        reproduction carry large variance and should always be quoted alongside the
+        project carry large variance and should always be quoted alongside the
         per-sequence spread. This is a property of evaluating on a handful of long video
         sequences, and it is worth stating plainly rather than presenting one number as
         definitive.
@@ -816,7 +816,7 @@
           <tr>
             <td>FELNet vs ReIDNet comparison</td>
             <td>replaced with appearance on/off</td>
-            <td>DeepSORT's ReID weights were unavailable, so the comparison the paper runs could not be reproduced exactly.</td>
+            <td>DeepSORT's ReID weights were unavailable, so the comparison the paper runs could not be repeated exactly.</td>
           </tr>
         </tbody>
       </table>

@@ -1,4 +1,4 @@
-# Conda environment for the JMDST reproduction.
+# Conda environment for this project.
 #
 #   conda env create -f environment.yml
 #   conda activate jmdst

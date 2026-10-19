@@ -1,7 +1,24 @@
-# JMDST Reproduction
+# UAV Multi-Vehicle Tracking with Edge/Ground Deployment
 
-This repository is being built step by step to reproduce JMDST:
-Joint Multi-target Detection and Single-target Tracking for UAV vehicle tracking.
+Our system for tracking ground vehicles in UAV video, and for running it split
+between the UAV (edge) and a ground station.
+
+It builds on the **JMDST** framework of She et al. (2026): run the heavy
+detector only on every τ-th frame and track the frames in between with a light
+single-target network (FELNet). On top of that base we added:
+
+- a YOLOv11m detector retrained at a low learning rate on combined UAVDT +
+  VisDrone data, with one configuration for both datasets;
+- IoU-only association (measured better than the base appearance cascade),
+  an NSA Kalman filter at detection frames, ECC camera-motion compensation,
+  and BYTE two-stage association for low-confidence detections;
+- an edge/ground deployment simulation: an emulated radio link (delay,
+  bandwidth, loss), onboard-compute limits, a real-time camera with
+  streaming evaluation, and per-frame network telemetry.
+
+Results: `RESULTS_SUMMARY.md`. Architecture: `ARCHITECTURE.md`.
+
+Base method: J. She, Y. Liu, R. Zhou, N. Qi, "Joint multi-target detection and single-target tracking framework for vehicles tracking based on UAV," *Aerospace Science and Technology* 171 (2026) 111625.
 
 ## Dataset Preparation
 
@@ -119,15 +136,18 @@ python scripts/export_demo_clip.py --source data/unified/uavdt/test/M0101 --outp
 Clips also run faster than the unified directories (mp4 decode beats per-frame
 JPEG): 31–54 FPS end-to-end versus ~19.
 
-## Implemented So Far
+## What is in it
 
-- VisDrone2019-MOT converter.
-- UAVDT converter.
-- Unified sequence metadata and frame annotation schema.
-- Paper SSI crop formula resized to 64x64.
-- FELNet 2x2 anchor overlap/confidence target generation.
-- PyTorch-ready detection, FELNet SSI, and tracking sequence datasets.
-- Synthetic dataset generator and visual verification script.
+- Dataset pipeline: VisDrone2019-MOT and UAVDT converters, a unified
+  annotation format, seeded train/val/test splits, a dataset verifier.
+- Detector: YOLOv11m training and inference (`scripts/train_yolo.py`).
+- FELNet: model, episode sampler, losses, training (`scripts/train_felnet.py`).
+- Tracker: Kalman filter, association (IoU / appearance / BYTE), NSA, CMC,
+  and the dual-branch detect/track loop (`scripts/run_jmdst.py`).
+- Evaluation: MOTA / IDF1 / HOTA (`scripts/evaluate.py`), ablations.
+- Edge/ground simulation: `scripts/ground_node.py`, `link_relay.py`,
+  `edge_node.py`, `run_sim.py`, `run_sweep.py`, `sim_telemetry.py`.
+- Live demo: `scripts/demo.py`, `demo_package/`.
 
 ## Verification
 

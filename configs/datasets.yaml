@@ -1,4 +1,4 @@
-# Dataset preparation config for the JMDST reproduction.
+# Dataset preparation config for this project.
 #
 # The scripts do not require PyYAML; this file records the intended paths and
 # defaults for repeatable runs.

@@ -1,4 +1,4 @@
-"""Training utilities for the JMDST reproduction."""
+"""Training utilities."""
 
 from .felnet_loss import FELNetLoss, felnet_total_loss
 

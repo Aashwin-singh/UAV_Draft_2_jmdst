@@ -5,7 +5,7 @@ and uses a Kalman filter for box prediction throughout (Algorithm 1 steps 8
 and 13) without specifying its internals. This is the standard DeepSORT
 Kalman filter formulation (Wojke et al.): an 8-D constant-velocity state
 over box center, aspect ratio, and height, observing the 4-D box directly.
-We reproduce that standard baseline faithfully, since the paper gives no
+We implement that standard baseline faithfully, since the paper gives no
 reason to deviate from it.
 
 State: [cx, cy, a, h, vx, vy, va, vh], where (cx, cy) is the box center,
