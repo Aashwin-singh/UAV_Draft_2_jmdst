@@ -25,15 +25,19 @@ compensation + conf 0.55 + τ = 3.
 
 | Configuration | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Ours — IoU association** | **55.4** | 77.5 | **59.7** | **47.8** | 48.7 | **47.1** | **637** | 21320 | 40745 | **26.9** |
+| **Ours — IoU association** | **55.4** | 77.5 | **59.7** | **47.8** | 48.7 | **47.1** | **637** | 21320 | 40745 | **62.9**† |
 | Ours — FELNet appearance | 53.8 | 77.5 | 50.0 | 40.6 | **48.8** | 33.9 | 2258 | 23241 | **39451** | 25.6 |
+
+† FPS re-measured 2026-10-19 after the crop speed fix (`project_log.md`); tracking output is byte-identical on all 18 test sequences, so every accuracy figure stands. The August figures were 26.9 (UAVDT) / 15.6 (VisDrone). The appearance rows were not re-measured and still carry August timings.
 
 ### 1.2 VisDrone2019 test — 10 sequences
 
 | Configuration | MOTA | MOTP | IDF1 | HOTA | DetA | AssA | IDs | FP | FN | FPS |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Ours — IoU association** | **44.6** | **78.6** | **59.7** | **49.3** | 40.4 | **60.6** | **317** | **9056** | 37333 | **15.6** |
+| **Ours — IoU association** | **44.6** | **78.6** | **59.7** | **49.3** | 40.4 | **60.6** | **317** | **9056** | 37333 | **31.8**† |
 | Ours — FELNet appearance | 43.4 | 78.5 | 55.1 | 46.0 | 40.4 | 52.5 | 734 | 9942 | **36999** | 11.7 |
+
+† As above: re-measured 2026-10-19 (August: 15.6).
 
 ---
 
@@ -50,8 +54,8 @@ Paper values transcribed from its Tables 5 and 6.
 | ByteTrack (paper) | 32.0 | 74.9 | 165 | 49.8 | 39.2 | 31.6 | 49.2 | 22.9 |
 | DiffusionTrack (paper) | 46.9 | 75.3 | 129 | 62.3 | 46.5 | 40.7 | 53.5 | 9.6 |
 | QDTrack (paper) | **69.7** | **81.5** | 179 | **76.5** | **62.9** | **59.2** | **67.0** | 13.0 |
-| JMDST (paper) | 67.3 | 81.2 | 170 | 73.5 | 60.1 | 59.0 | 61.3 | **26.6** |
-| **JMDST (ours)** | 55.4 | 77.5 | 637 | 59.7 | 47.8 | 48.7 | 47.1 | **26.9** |
+| JMDST (paper) | 67.3 | 81.2 | 170 | 73.5 | 60.1 | 59.0 | 61.3 | 26.6 |
+| **JMDST (ours)** | 55.4 | 77.5 | 637 | 59.7 | 47.8 | 48.7 | 47.1 | **62.9** |
 
 ### 2.2 VisDrone2019
 
@@ -62,8 +66,8 @@ Paper values transcribed from its Tables 5 and 6.
 | ByteTrack (paper) | 39.0 | 75.6 | 457 | 53.6 | 41.5 | 34.9 | 50.2 | 16.9 |
 | DiffusionTrack (paper) | 40.5 | 75.3 | 652 | 55.0 | 43.2 | 37.9 | 50.1 | 13.2 |
 | QDTrack (paper) | **49.5** | 77.2 | **161** | **66.0** | 49.0 | **41.0** | 58.9 | 11.3 |
-| JMDST (paper) | 44.9 | 76.5 | 178 | 62.4 | 46.4 | 38.0 | 56.9 | **18.6** |
-| **JMDST (ours)** | 44.6 | **78.6** | 317 | 59.7 | **49.3** | 40.4 | **60.6** | 15.6 |
+| JMDST (paper) | 44.9 | 76.5 | 178 | 62.4 | 46.4 | 38.0 | 56.9 | 18.6 |
+| **JMDST (ours)** | 44.6 | **78.6** | 317 | 59.7 | **49.3** | 40.4 | **60.6** | **31.8** |
 
 ### 2.3 Ours vs. paper's JMDST — deltas
 
@@ -76,7 +80,9 @@ Paper values transcribed from its Tables 5 and 6.
 | DetA | −10.3 | **+2.4** |
 | AssA | −14.2 | **+3.7** |
 | IDs | worse (637 vs 170) | worse (317 vs 178) |
-| FPS | **+0.3** | −3.0 |
+| FPS | **+36.3** | **+13.2** |
+
+FPS: ours on an RTX 4070 Laptop GPU, the paper's on an RTX 3070, so the speed comparison is indicative.
 
 Ours vs. **QDTrack**, the strongest baseline in the paper's own tables:
 VisDrone HOTA **+0.3** (49.3 vs 49.0) and AssA **+1.7** (60.6 vs 58.9).

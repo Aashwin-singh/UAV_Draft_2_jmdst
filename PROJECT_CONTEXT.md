@@ -309,20 +309,25 @@ deletion (DeepSORT uses `max_age=30`). Both come from A.6/A.8.
 Section A above remains ground truth for *what the paper specifies*. These two
 files describe *what this repository actually does*.
 
-**Summary as of 2026-07-28**
+**Summary as of 2026-10-19**
 
 - **10 of 11 phases implemented.** Phases 1-5 and 7-11 are complete, verified,
-  and committed. 93 tests pass (`python -m unittest discover -s tests`).
+  and committed. 184 tests pass (`python -m unittest discover -s tests`).
 - **Phase 6 (MSFP) is the only gap.** Blocked because the PyPI `mamba-ssm`
   sdist ships without the CUDA sources its own `setup.py` requires — not a
   Windows-specific fault. The paper's ablation puts MSFP at ~1% of the
   metrics, so it was deprioritized rather than allowed to block the project.
   Real paths forward are recorded in `project_log.md`.
-- **Final held-out test results**: UAVDT MOTA 43.6 / HOTA 37.1 at 36 FPS;
-  VisDrone MOTA 27.3 / HOTA 36.3 at 18.3 FPS (faithful configuration, with
-  the IoU-only variant reported alongside). Speed matches or exceeds the
-  paper's; accuracy cannot be compared directly because the paper's UAVDT and
-  VisDrone tables are images in the PDF whose values were never extractable.
+- **Final held-out test results** (one shipping configuration for both
+  datasets, `ARCHITECTURE.md`): UAVDT HOTA 47.8 / MOTA 55.4; VisDrone HOTA
+  49.3 / MOTA 44.6, at 62.9 and 31.8 FPS. Compared with the paper's
+  Tables 5-6 (transcribed in `RESULTS_SUMMARY.md` §2): VisDrone matches on MOTA
+  and exceeds on HOTA; UAVDT trails. Splits are not the paper's.
+- **Edge/ground deployment simulation** (evaluation snapshots 4.10/4.11): the
+  tracker split into a UAV (edge) and a ground station over an emulated link,
+  with edge hardware limits and real-time streaming scoring —
+  `project_log.md` "Edge/ground simulation" Phases 0-5,
+  `handover/MENTOR_BRIEF.md`.
 - **Environment**: conda env `jmdst`. Raw datasets live under `Datasets/`
   (capital D); `data/`, `outputs/` and all checkpoints are gitignored and
   regenerable.

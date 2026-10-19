@@ -35,8 +35,16 @@ dependencies:
       - pyyaml==6.0.3
       - tqdm==4.69.0
       - matplotlib
+      - psutil==7.2.2
 
 # Notes:
+# - psutil is used directly by the edge/ground simulation (CPU measurement,
+#   core pinning) and by preflight. Ultralytics also pulls it in, but the
+#   simulation should not depend on that by accident.
+# - pillow is pinned for a second reason: the modelled ground station's cache
+#   is keyed by the edge's JPEG bytes, so a different Pillow (or libjpeg) build
+#   can turn every lookup into a miss. Misses fall back to live YOLO and are
+#   counted, so check `cache misses` in the ground's summary on a new machine.
 # - Everything is installed via pip rather than mixing conda and pip packages,
 #   which is what previously let a CPU torch shadow the CUDA one.
 # - motmetrics 1.4 predates NumPy 2 and calls np.asfarray; jmdst/eval/metrics.py

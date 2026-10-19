@@ -237,7 +237,7 @@ Full tables in `RESULTS_SUMMARY.md`.
 | MOTA | 55.4 | 44.6 |
 | HOTA | 47.8 | 49.3 |
 | IDF1 | 59.7 | 59.7 |
-| FPS | 26.9 | 15.6 |
+| FPS | 62.9 | 31.8 |
 
 **On VisDrone this matches the published paper on MOTA (44.6 vs 44.9) and
 exceeds it on HOTA (+2.9), AssA (+3.7), DetA (+2.4) and MOTP (+2.1).**

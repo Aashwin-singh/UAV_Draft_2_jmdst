@@ -224,8 +224,7 @@ to tracking-branch updates and costs 1.6 HOTA: FELNet's anchor confidence
 reports anchor *coverage*, not localisation accuracy, so it is the wrong
 signal to scale measurement noise by. See `project_log.md`.
 
-Val, **with `--nsa --cmc`** (test not yet re-run with these — the test column
-below predates both):
+Val and held-out test, **the full shipping configuration** (all extras above):
 
 | | UAVDT val | VisDrone val | UAVDT test | VisDrone test |
 |---|---:|---:|---:|---:|
@@ -235,7 +234,10 @@ below predates both):
 | DetA | 39.1 | 49.8 | 48.7 | 40.4 |
 | MOTA | 25.7\* | 56.3 | 55.4 | 44.6 |
 | IDs | 60 | 519 | 637 | 317 |
-| FPS | 46.9 | 20.2 | 26.9 | 15.6 |
+| FPS | 61.5 | 39.8 | 62.9 | 31.8 |
+
+FPS re-measured 2026-10-19, after the crop speed fix (outputs byte-identical);
+August figures were 46.9 / 20.2 (val) and 26.9 / 15.6 (test).
 
 
 
@@ -245,11 +247,11 @@ and MOTP (+2.1)** — and edges QDTrack, the paper's strongest baseline, on HOTA
 and AssA. UAVDT still trails on every metric (HOTA -12.3). Splits are not the
 paper's, so none of this is like-for-like.
 
-conf 0.55 maximises the *worse* of the two HOTAs (the right criterion for a
-general model, rather than the average), is VisDrone's outright optimum, and
-sits 0.6 below UAVDT's own peak. **It is also the paper's unmodified value**,
-so this configuration carries no threshold deviation — unlike every
-per-dataset config that preceded it.
+conf 0.55 is, after BYTE, the HOTA maximum of **each** dataset independently
+(re-swept 0.45-0.65, `RESULTS_SUMMARY.md` §3.5) — not a compromise between
+them. **It is also the paper's unmodified value**, so this configuration
+carries no threshold deviation — unlike every per-dataset config that
+preceded it.
 
 \* **UAVDT MOTA is deflated by a labelling artifact, not by tracking quality.**
 The combined detector finds cars generally; UAVDT labels only some of them, so

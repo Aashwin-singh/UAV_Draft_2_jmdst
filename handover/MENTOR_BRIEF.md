@@ -95,10 +95,12 @@ numbers, not a crash:
 | HOTA | 47.8 | 60.1 | **49.3** | 46.4 |
 | MOTA | 55.4 | 67.3 | 44.6 | 44.9 |
 | IDF1 | 59.7 | 73.5 | 59.7 | 62.4 |
-| FPS | 26.9 | 26.6 | 15.6 | 18.6 |
+| FPS | **62.9** | 26.6 | **31.8** | 18.6 |
 
 Takeaway: VisDrone matches the paper on MOTA and beats it on HOTA; UAVDT
 trails. Splits are not the paper's (never published), so this is indicative.
+FPS is on an RTX 4070 Laptop GPU (the paper used an RTX 3070), re-measured
+after the crop speed fix with byte-identical tracking output.
 
 ## 5. Deployment results (simulation)
 

@@ -5,6 +5,42 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## Finalisation: test-split FPS re-measured, stale docs fixed (2026-10-19)
+
+**Test-split FPS re-measured** after the crop speed fix (Phase 0) and the
+box-size clamp, shipping configuration, machine at ~10% CPU (Windows Defender
+scanning on ~1 core). **Tracking output byte-identical to the reported test
+outputs on 18/18 sequences** (`outputs/test_final_fps` vs
+`outputs/test_byte_iou`), so every reported accuracy figure stands.
+
+| | August | today | change |
+|---|---:|---:|---:|
+| UAVDT test FPS | 26.9 | **62.9** | +134% |
+| VisDrone test FPS | 15.6 | **31.8** | +104% |
+| UAVDT val FPS | 46.9 | 61.5 | +31% |
+| VisDrone val FPS | 20.2 | 39.8 | +97% |
+
+The val change matches what the crop fix explains (A/B on 2026-10-15: +29%
+UAVDT, ~+70% VisDrone from one noisy pair). The test change is larger because
+the August *test* timing was already depressed relative to that same day's
+val timing (26.9 vs 46.9 on UAVDT); today test and val agree (62.9 vs 61.5).
+So the old test FPS was low for two reasons: the per-target frame copy, and a
+slower machine state during that run. Against the paper: 62.9 vs 26.6
+(UAVDT), 31.8 vs 18.6 (VisDrone), on an RTX 4070 Laptop vs the paper's RTX
+3070. Updated in `RESULTS_SUMMARY.md`, `ARCHITECTURE.md`, `HANDOVER.md`,
+`MENTOR_BRIEF.md`, `PROJECT_CONTEXT.md`.
+
+**Stale docs fixed** (flagged at the start of the 2026-10-12 session):
+`ARCHITECTURE.md`'s results-table caption said the test column predated
+NSA/CMC (it is the full shipping configuration), and its conf paragraph said
+0.55 "sits 0.6 below UAVDT's own peak" (after BYTE it is each dataset's
+maximum); `PROJECT_CONTEXT.md` Section B still read 93 tests, July test
+numbers and "paper tables never extractable"; this log's yolo11m section was
+still headed IN PROGRESS. **`environment.yml`** now lists `psutil` explicitly
+(the simulation imports it; it was only present via ultralytics), with a note
+that the pinned Pillow also keys the detection cache. Snapshot 4.12
+regenerated (184 tests).
+
 ## Edge/ground simulation, Phase 5 (part 2) — quick sweep results (2026-10-19)
 
 The full 24-configuration sweep (~2 h) never ran: `outputs/sim/sweep` stayed
@@ -396,7 +432,7 @@ the old/new ratio is valid. The held-out test FPS in `RESULTS_SUMMARY.md`
 output is provably identical, so only the timing is stale. Re-measure on an
 idle machine before quoting new FPS.
 
-## IN PROGRESS — detector capacity upgrade: yolo11n → yolo11m (2026-08-06)
+## Detector capacity upgrade: yolo11n → yolo11m (2026-08-06) — done, adopted
 
 Post-test improvement work. Rationale is the project's own repeated finding:
 **the detector is the dominant accuracy lever, not the tracker** (per-sequence
