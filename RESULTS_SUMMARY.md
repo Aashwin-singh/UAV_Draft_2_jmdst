@@ -276,6 +276,34 @@ Diverged: paper's FP decreases with τ, ours increases.
 
 ---
 
+## 6b. Deployment simulation — split UAV / ground station (UAVDT val, quick sweep)
+
+Edge (UAV) runs the tracker; only detection frames (1 in 3) go to the ground's
+YOLO over an emulated link. Real-time camera at 30 fps, streaming-perception
+scoring, modelled ground station (0 cache misses). Base: 4-core CPU UAV,
+10 ms ±2 each way, 50 Mbit/s, no loss, 150 ms deadline. Offline reference
+(no clock, JPEG frames): HOTA 45.8. Method and verification: `project_log.md`,
+"Edge/ground simulation" Phases 0-5.
+
+| UAV compute | Split (YOLO on ground) HOTA | Onboard (YOLO on UAV) HOTA |
+|---|---:|---:|
+| GPU | 39.2 | **43.6** |
+| 4 CPU cores | **36.8** | 22.5 |
+| 1 CPU core | 32.4 | — |
+
+| Network (4-core UAV) | HOTA | Replies on time | Frames processed |
+|---|---:|---:|---:|
+| Base | 36.8 | 100% | 64% |
+| 0.5% packet loss | 26.1 | 71% | 52% |
+| 2% packet loss | 9.0 | 18% | 38% |
+| 10 Mbit/s uplink | 23.0 | 60% | 46% |
+| 50 ms one-way delay | 25.3 | 76% | 40% |
+
+Offloading pays only without an onboard GPU (+14.3 HOTA on 4 cores; -4.4
+with a GPU). The network costs more than UAV compute: a ~75-packet frame is
+lost to any single lost packet, and each lost or late reply stalls the UAV for
+the full deadline.
+
 ## 7. Parameters the paper does not specify
 
 | Parameter | Paper | Ours |
@@ -302,7 +330,7 @@ embedding dim 16, SSI 64×64.
 | Phases 1–5, 7–11 | Complete, verified, committed |
 | Phase 6 (MSFP) | Not implemented — `mamba-ssm` PyPI sdist ships without its CUDA sources |
 | Adaptive process noise (SAKF-RCE) | Not implemented — ruled out by §4.2: only 5.9/17.9 % of ID switches are association failures, and those occur at ~0.03 box-heights displacement |
-| Unit tests | 183 passing |
+| Unit tests | 184 passing |
 | Splits held out | Test split used once, after config was frozen on val |
 
 ### Deviations from the paper

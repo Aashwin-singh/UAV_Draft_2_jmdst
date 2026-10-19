@@ -23,6 +23,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SURFACE, INK, INK_2, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
 SERIES = {"uavdt": "#2a78d6", "visdrone": "#eb6834"}
 DATASET_LABEL = {"uavdt": "UAVDT", "visdrone": "VisDrone"}
+DESIGN_SERIES = {"split": "#2a78d6", "onboard": "#eb6834"}  # same validated slots 1-2
+DESIGN_LABEL = {"split": "split: detection on ground", "onboard": "onboard: YOLO on the UAV"}
 EDGE_ORDER = ["gpu", "e8", "e4", "e2", "e1"]
 EDGE_LABEL = {"gpu": "GPU", "e8": "8 E-cores", "e4": "4 E-cores", "e2": "2 E-cores", "e1": "1 E-core"}
 
@@ -113,16 +115,22 @@ def chart(group: str, rows: list[dict], path: Path, extra: list[dict] | None = N
         ax.tick_params(colors=MUTED, labelcolor=INK_2)
         ax.set_title(label, color=INK, fontsize=11, loc="left")
         series = [("split", rows)] + ([("onboard", extra)] if extra else [])
+        datasets = sorted({r["dataset"] for r in rows + (extra or [])})
+        by_design = bool(extra) and len(datasets) == 1  # one dataset: hue carries the design
         for design, data in series:
-            for dataset in ("uavdt", "visdrone"):
+            for dataset in datasets:
                 pts = sorted((x_of(group, r["value"])[0], float(r[key])) for r in data
                              if r["dataset"] == dataset and r[key] not in ("", None))
                 if not pts:
                     continue
                 xs, ys = zip(*pts)
-                style = "-" if design == "split" else (0, (1, 2))
-                name = DATASET_LABEL[dataset] + ("" if not extra else f", {design}")
-                ax.plot(xs, ys, linestyle=style, color=SERIES[dataset], linewidth=2, solid_capstyle="round",
+                if by_design:
+                    color, style = DESIGN_SERIES[design], "-"
+                    name = DESIGN_LABEL[design]
+                else:
+                    color, style = SERIES[dataset], ("-" if design == "split" else (0, (1, 2)))
+                    name = DATASET_LABEL[dataset] + ("" if not extra else f", {design}")
+                ax.plot(xs, ys, linestyle=style, color=color, linewidth=2, solid_capstyle="round",
                         marker="o" if design == "split" else "s", markersize=8,
                         markeredgecolor=SURFACE, markeredgewidth=2, label=name)
                 ax.annotate(f"{ys[-1]:.0f}", (xs[-1], ys[-1]), xytext=(6, 0), textcoords="offset points",

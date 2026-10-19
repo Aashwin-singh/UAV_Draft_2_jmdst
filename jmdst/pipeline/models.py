@@ -65,14 +65,19 @@ class FELNetLocalizer:
         self.anchors = torch.tensor(anchor_boxes(64, 2), dtype=torch.float32, device=device)
 
     def __call__(self, image, boxes_xywh) -> list[tuple[np.ndarray, np.ndarray, float]]:
-        # Clamp input box sizes to >= 1px so crop_ssi never sees a degenerate
-        # box (defensive: a predicted box should be valid, but never crash a
-        # long run on a rare Kalman drift).
+        # Clamp input box sizes to [1 px, frame size] so crop_ssi never sees a
+        # degenerate or absurd box (defensive: a predicted box should be valid,
+        # but never crash a long run on a Kalman drift). The upper bound was
+        # found by the edge/ground sweep: at 2% packet loss most detection
+        # frames are lost, a track coasted long enough for its Kalman box to
+        # blow up, and the crop canvas for it raised MemoryError. No real
+        # target is larger than the frame, so normal boxes are unaffected.
+        width, height = image.size
         prepared = []
         for b in boxes_xywh:
             b = np.asarray(b, dtype=np.float64).copy()
-            b[2] = max(b[2], 1.0)
-            b[3] = max(b[3], 1.0)
+            b[2] = min(max(b[2], 1.0), float(width))
+            b[3] = min(max(b[3], 1.0), float(height))
             prepared.append(b)
         boxes_xywh = prepared
         if not boxes_xywh:

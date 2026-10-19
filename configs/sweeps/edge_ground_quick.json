@@ -1,0 +1,24 @@
+{
+  "description": "Quick subset of edge_ground_val.json (~20 min): UAVDT val only, the configurations that answer the main questions -- how much edge compute the split design needs, whether offloading beats running YOLO onboard, and what loss, bandwidth and latency cost.",
+  "datasets": ["uavdt"],
+  "split": "val",
+  "yolo": "outputs/yolo_runs/retrain_aug_m_lowlr/weights/best.pt",
+  "felnet": "outputs/felnet_runs/full_run/best.pt",
+  "ground_cache": "outputs/sim/detcache/val_jpeg90.npz",
+  "host_cpus": "0-15",
+  "edge_common": ["--conf", "0.55", "--no-appearance", "--nsa", "--cmc", "--byte", "--byte-low-conf", "0.4",
+                  "--codec", "jpeg", "--jpeg-quality", "90", "--realtime", "--camera-fps", "30"],
+  "edges": {
+    "gpu": ["--device", "cuda"],
+    "e4":  ["--device", "cpu", "--edge-cpus", "16-19"],
+    "e1":  ["--device", "cpu", "--edge-cpus", "16"]
+  },
+  "base": {"edge": "e4", "detector": "ground", "delay_ms": 10, "rate_mbit": 50, "loss": "", "deadline_ms": 150},
+  "groups": {
+    "hardware":  {"vary": "edge", "values": ["gpu", "e4", "e1"]},
+    "onboard":   {"vary": "edge", "values": ["gpu", "e4"], "set": {"detector": "onboard"}},
+    "loss":      {"vary": "loss", "values": ["", "0.5%", "2%"]},
+    "bandwidth": {"vary": "rate_mbit", "values": [10, 50]},
+    "latency":   {"vary": "delay_ms", "values": [10, 50]}
+  }
+}

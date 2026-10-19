@@ -190,5 +190,27 @@ class SelectAnchorOutputTests(unittest.TestCase):
         self.assertEqual(selected.tolist(), [0, 3])
 
 
+class FELNetLocalizerRobustnessTests(unittest.TestCase):
+    def test_runaway_kalman_box_is_clamped_not_a_memory_error(self) -> None:
+        # Found by the edge/ground sweep at 2% packet loss: a long-coasting
+        # track's box grew without bound and the crop canvas raised MemoryError.
+        import numpy as np
+        from PIL import Image
+
+        from jmdst.pipeline.models import FELNetLocalizer
+
+        localizer = FELNetLocalizer(FELNet().eval(), device="cpu")
+        image = Image.new("RGB", (200, 100))
+        normal = np.array([20.0, 30.0, 25.0, 15.0])
+        runaway = np.array([50.0, 40.0, 3.0e7, 9.0e6])
+        results = localizer(image, [normal, runaway])
+        self.assertEqual(len(results), 2)
+        for _emb, box, _conf in results:
+            self.assertTrue(np.all(np.isfinite(box)))
+        # A normal box is untouched by the clamp: same result alone as in a batch.
+        alone = localizer(image, [normal])[0]
+        self.assertTrue(np.allclose(alone[1], results[0][1]))
+
+
 if __name__ == "__main__":
     unittest.main()

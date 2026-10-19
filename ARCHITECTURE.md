@@ -10,7 +10,7 @@ this JMDST reproduction. Read alongside:
 
 **Status**: 10 of 11 phases implemented. Only Phase 6 (MSFP) is missing —
 blocked because the PyPI `mamba-ssm` sdist ships without its CUDA sources.
-183 tests pass. Final held-out test results are in `project_log.md`.
+184 tests pass. Final held-out test results are in `project_log.md`.
 
 ---
 
@@ -136,7 +136,10 @@ plausible-looking but wrong numbers rather than a crash.
 9. **Degenerate boxes are guarded in two places**: `FELNetLocalizer` falls
    back to the input box when the overlap decode is degenerate, and
    `_confirmed_outputs` skips a frame whose Kalman box is transiently
-   invalid. Both were found only by running on real data.
+   invalid. Both were found only by running on real data. A third guard caps
+   the box `FELNetLocalizer` crops at the frame size: under heavy packet loss
+   a long-coasting track's box grew without bound and the crop raised
+   `MemoryError` (found by the edge/ground sweep at 2% loss).
 10. **ultralytics nests relative `--project` paths** under its own
     `runs/detect/…`. Always resolve to an absolute path.
 11. **`.gitignore` dataset patterns must stay root-anchored** (`/data/`, not
@@ -173,7 +176,7 @@ plausible-looking but wrong numbers rather than a crash.
 ## Running things
 
 ```bash
-python -m unittest discover -s tests          # 183 tests; use discover, not -m unittest tests.x
+python -m unittest discover -s tests          # 184 tests; use discover, not -m unittest tests.x
 python scripts/run_jmdst.py --yolo <w> --felnet <c> --datasets uavdt --split val --tau 3
 python scripts/evaluate.py --results outputs/jmdst_results/uavdt/val --dataset uavdt --split val
 python scripts/run_ablations.py --datasets uavdt --split val

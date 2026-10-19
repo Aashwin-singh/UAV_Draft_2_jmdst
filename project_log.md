@@ -5,6 +5,46 @@ parallel. See `PROJECT_CONTEXT.md` for the full technical spec (Section A)
 and detailed phase roadmap (Section B) — this file is just a quick "where
 are we" snapshot, updated as phases complete.
 
+## Edge/ground simulation, Phase 5 (part 2) — quick sweep results (2026-10-19)
+
+The full 24-configuration sweep (~2 h) never ran: `outputs/sim/sweep` stayed
+empty and nothing under `C:\ML project` held its output (most likely the
+`--dry-run` line was run). With ~2 h before the mentor review, a 9-configuration
+subset ran instead: `configs/sweeps/edge_ground_quick.json`, UAVDT val only,
+`outputs/sim/sweep_quick` (report: `report/report.md`). 0 cache misses.
+
+| configuration | HOTA | IDF1 | frames processed | replies on time | RTT p50 | latency p50 / p95 |
+|---|---:|---:|---:|---:|---:|---:|
+| split, GPU UAV | 39.2 | 52.6 | 84.7% | 100% | 58 ms | 41 / 74 ms |
+| split, 4 E-cores (base) | 36.8 | 47.8 | 63.9% | 100% | 58 ms | 69 / 99 ms |
+| split, 1 E-core | 32.4 | 38.7 | 44.2% | 100% | 57 ms | 88 / 148 ms |
+| onboard, GPU UAV | **43.6** | 59.3 | 100% | — | — | 16 / 35 ms |
+| onboard, 4 E-cores | 22.5 | 25.0 | 20.3% | — | — | 87 / 458 ms |
+| base + 0.5% loss | 26.1 | 30.2 | 51.5% | 70.7% | 57 ms | 70 / 213 ms |
+| base + 2% loss | 9.0 | 7.9 | 37.6% | 17.9% | 56 ms | 77 / 235 ms |
+| base, 10 Mbit/s | 23.0 | 24.0 | 45.8% | 59.5% | 120 ms | 64 / 182 ms |
+| base, 50 ms each way | 25.3 | 27.6 | 39.9% | 76.1% | 143 ms | 72 / 218 ms |
+
+Findings: (1) offloading pays only without an onboard GPU — +14.3 HOTA on a
+4-core CPU UAV, -4.4 with a GPU (the network round trip costs more than GPU
+YOLO). (2) The split design degrades gracefully with UAV compute (39.2 ->
+36.8 -> 32.4). (3) The network costs more than compute: 0.5% packet loss loses
+~30% of ~75-packet frames (theory 69% survive, measured 71%) and every lost or
+late reply stalls the synchronous edge for the full 150 ms deadline. (4)
+Consistency: onboard GPU (every frame, shown one frame late) scored 43.6
+against 43.8 predicted from the offline output shifted one frame.
+
+**Bug found by the sweep**: at 2% loss the edge crashed with `MemoryError` in
+`crop_ssi` — a long-coasting track's Kalman box grew without bound. Fixed by
+capping the box `FELNetLocalizer` crops at the frame size; regression test
+fails without the fix (MemoryError) and passes with it; **full val
+single-process output identical to before the fix on 13/13 sequences**
+(`outputs/p6_clamp` vs `outputs/p0_nocopy`).
+
+Mentor demo prepared and every step run as written: preflight READY, 184
+tests OK, link calibration 29/29, live three-node run (live YOLO ground: 42/51
+replies on time), telemetry report, visual demo. `handover/MENTOR_BRIEF.md`.
+
 ## Edge/ground simulation, Phase 5 (part 1) — modelled ground + sweep tooling (2026-10-18)
 
 **Modelled ground station** (`jmdst/net/detcache.py`, chosen over live YOLO
